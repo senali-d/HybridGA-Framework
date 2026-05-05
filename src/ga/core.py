@@ -10,6 +10,7 @@ algorithm features on the SGA's behavior.
 """
 
 import random
+from collections import deque
 import numpy as np
 from deap import base, creator, tools
 
@@ -42,6 +43,9 @@ class FeatureConfig:
         cx_prob=0.9,
         mut_prob=0.1,
         elitism_k=1,
+        n_islands=1,            # F46: number of sub-populations (1 = single panmictic pop)
+        migration_interval=10,  # F46: migrate every G generations
+        archive_size=5,         # F37/F31/F09: capacity of historical-best archive
     ):
         self.name = name
         self.init_fn = init_fn
@@ -53,6 +57,9 @@ class FeatureConfig:
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
         self.elitism_k = elitism_k
+        self.n_islands = n_islands
+        self.migration_interval = migration_interval
+        self.archive_size = archive_size
 
 
 # ===================== DEFAULT (BASELINE) OPERATORS =====================
@@ -146,6 +153,12 @@ def run_sga(
     Returns:
         result: dict with best_fitness, best_solution, fes_used, history
     """
+    # F46: dispatch to island co-evolution when configured
+    if getattr(config, "n_islands", 1) > 1:
+        return run_sga_islands(
+            problem, config, pop_size=pop_size, max_fes=max_fes,
+            seed=seed, record_history=record_history,
+        )
     rng = np.random.default_rng(seed)
     random.seed(seed)  # DEAP's selection helpers use Python's `random`
 
@@ -166,6 +179,16 @@ def run_sga(
         "best_so_far": None,
         "stagnation_counter": 0,
         "last_best_fitness": np.inf,
+        # Backbone extensions for nature-inspired features:
+        "_population": [],                              # current pop, refreshed each gen
+        "archive": deque(maxlen=config.archive_size),   # historical-best archive (F09/F31/F37)
+        "shade_memory": {                               # F42 SHADE-style adaptive F/CR
+            "F":  deque([0.5] * 5, maxlen=10),
+            "CR": deque([0.5] * 5, maxlen=10),
+        },
+        "t_ratio": 0.0,                                 # gen / max_gen_estimate (F40/41/44)
+        "hho_energy": 1.0,                              # |E| escape energy (F20/F43)
+        "config": config,                               # so operators can read e.g. mut_prob
     }
 
     # Pick operators (use defaults if not overridden)
@@ -193,14 +216,27 @@ def run_sga(
     while eval_counter[0] < max_fes:
         gen += 1
         ctx["gen"] = gen
+        ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
+        # HHO escape energy: E = 2*E0*(1 - t/T), E0 ~ U(-1,1)
+        ctx["hho_energy"] = 2.0 * (rng.random() * 2.0 - 1.0) * (1.0 - ctx["t_ratio"])
+        ctx["_population"] = list(population)
 
         # ---- Selection (with selection-pressure tracking) ----
         pre_select_fits = np.array([ind.fitness.values[0] for ind in population])
-        parents = select_fn(population, len(population), ctx)
-        parents = [creator.Individual(list(p)) for p in parents]
-        for p, src in zip(parents, select_fn(population, len(population), ctx)):
-            p.fitness.values = src.fitness.values
-        post_select_fits = np.array([p.fitness.values[0] for p in parents])
+        raw_parents = select_fn(population, len(population), ctx)
+        parents = []
+        for p in raw_parents:
+            new_p = creator.Individual(list(p))
+            try:
+                if p.fitness.valid:
+                    new_p.fitness.values = p.fitness.values
+            except Exception:
+                pass
+            parents.append(new_p)
+        post_select_fits = np.array(
+            [p.fitness.values[0] if p.fitness.valid else float("inf")
+             for p in parents]
+        )
         pre_var = float(np.var(pre_select_fits))
         post_var = float(np.var(post_select_fits))
         selection_pressure = pre_var / post_var if post_var > 1e-30 else float("inf")
@@ -253,16 +289,16 @@ def run_sga(
                 # step size = ||child - primary parent||₂
                 step_sizes.append(float(np.linalg.norm(
                     np.asarray(child, dtype=float) - np.asarray(parent, dtype=float))))
-                if cx_was_applied[i]:
+                if cx_was_applied[i] and parent.fitness.valid:
                     cx_attempts += 1
                     if child.fitness.values[0] < parent.fitness.values[0]:
                         cx_successes += 1
             if mut_was_applied[i]:
-                mut_attempts += 1
-                # compare child to its pre-mutation form's parent fitness as proxy
                 parent = parents[cx_parent_idx[i]] if cx_parent_idx[i] < len(parents) else None
-                if parent is not None and child.fitness.values[0] < parent.fitness.values[0]:
-                    mut_successes += 1
+                if parent is not None and parent.fitness.valid:
+                    mut_attempts += 1
+                    if child.fitness.values[0] < parent.fitness.values[0]:
+                        mut_successes += 1
 
         cx_success_rate = (cx_successes / cx_attempts) if cx_attempts else 0.0
         mut_success_rate = (mut_successes / mut_attempts) if mut_attempts else 0.0
@@ -285,6 +321,10 @@ def run_sga(
                     f = evaluate_fn(np.asarray(ind))
                     ind.fitness.values = (float(f),)
                     eval_counter[0] += 1
+            # Drop any leftover unevaluated members (budget exhausted)
+            population = [ind for ind in population if ind.fitness.valid]
+            if not population:
+                break
 
         # ---- Track best & history ----
         cur_best = min(population, key=lambda x: x.fitness.values[0])
@@ -293,6 +333,10 @@ def run_sga(
             best.fitness.values = cur_best.fitness.values
             ctx["best_so_far"] = best
             ctx["stagnation_counter"] = 0
+            # Push the new best into the historical archive (F09/F31/F37)
+            archived = creator.Individual(list(best))
+            archived.fitness.values = best.fitness.values
+            ctx["archive"].append(archived)
         else:
             ctx["stagnation_counter"] += 1
 
@@ -323,6 +367,177 @@ def run_sga(
     if error < 1e-8:
         error = 0.0
 
+    return {
+        "variant": config.name,
+        "seed": seed,
+        "best_fitness": float(best.fitness.values[0]),
+        "error": error,
+        "best_solution": list(best),
+        "fes_used": eval_counter[0],
+        "history": history,
+    }
+
+
+# ===================== F46: ISLAND CO-EVOLUTION =====================
+
+def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
+                    record_history=True):
+    """K isolated sub-populations evolve in parallel; best individuals
+    migrate every `config.migration_interval` generations.
+
+    To stay close to the single-pop loop without duplicating its full
+    instrumentation, each island holds its own panmictic SGA state and
+    advances one generation at a time. Selection/crossover/mutation never
+    cross island boundaries between migrations.
+    """
+    rng = np.random.default_rng(seed)
+    random.seed(seed)
+
+    dim = problem.ndim
+    lb = np.asarray(problem.lb, dtype=float)
+    ub = np.asarray(problem.ub, dtype=float)
+    if max_fes is None:
+        max_fes = 200_000 if dim <= 10 else 1_000_000
+
+    K = max(1, config.n_islands)
+    island_pop_sizes = [pop_size // K] * K
+    for i in range(pop_size - sum(island_pop_sizes)):
+        island_pop_sizes[i] += 1
+
+    init_fn = config.init_fn or default_init
+    select_fn = config.select_fn or default_select
+    crossover_fn = config.crossover_fn or default_crossover
+    mutate_fn = config.mutate_fn or default_mutate
+    replace_fn = config.replace_fn or default_replace
+    evaluate_fn = problem.evaluate
+    eval_counter = [0]
+
+    # Per-island state
+    islands = []
+    for k in range(K):
+        ctx = {
+            "rng": rng, "lb": lb, "ub": ub, "dim": dim,
+            "pop_size": island_pop_sizes[k], "max_fes": max_fes,
+            "elitism_k": config.elitism_k,
+            "gen": 0,
+            "max_gen_estimate": max_fes // max(pop_size, 1),
+            "best_so_far": None,
+            "stagnation_counter": 0,
+            "last_best_fitness": np.inf,
+            "_population": [],
+            "archive": deque(maxlen=config.archive_size),
+            "shade_memory": {
+                "F":  deque([0.5] * 5, maxlen=10),
+                "CR": deque([0.5] * 5, maxlen=10),
+            },
+            "t_ratio": 0.0,
+            "hho_energy": 1.0,
+            "config": config,
+            "island_id": k,
+        }
+        init_vectors = init_fn(island_pop_sizes[k], dim, lb, ub, ctx)
+        pop = [make_individual(clip_to_bounds(v, lb, ub)) for v in init_vectors]
+        evaluate_population(pop, evaluate_fn, eval_counter)
+        islands.append({"pop": pop, "ctx": ctx})
+
+    # Global best across all islands
+    all_inds = [ind for isl in islands for ind in isl["pop"]]
+    best = creator.Individual(list(min(all_inds, key=lambda x: x.fitness.values[0])))
+    best.fitness.values = min(all_inds, key=lambda x: x.fitness.values[0]).fitness.values
+
+    history = []
+    gen = 0
+    while eval_counter[0] < max_fes:
+        gen += 1
+        for isl in islands:
+            ctx = isl["ctx"]
+            pop = isl["pop"]
+            ctx["gen"] = gen
+            ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
+            ctx["hho_energy"] = 2.0 * (rng.random() * 2 - 1) * (1.0 - ctx["t_ratio"])
+            ctx["_population"] = list(pop)
+
+            parents = select_fn(pop, len(pop), ctx)
+            parents = [creator.Individual(list(p)) for p in parents]
+            for p, src in zip(parents, select_fn(pop, len(pop), ctx)):
+                p.fitness.values = src.fitness.values
+
+            offspring = []
+            for i in range(0, len(parents) - 1, 2):
+                p1, p2 = parents[i], parents[i + 1]
+                if rng.random() < config.cx_prob:
+                    c1, c2 = crossover_fn(p1, p2, ctx)
+                else:
+                    c1, c2 = list(p1), list(p2)
+                offspring.append(make_individual(clip_to_bounds(c1, lb, ub)))
+                offspring.append(make_individual(clip_to_bounds(c2, lb, ub)))
+
+            for i, ind in enumerate(offspring):
+                if rng.random() < config.mut_prob:
+                    m = mutate_fn(ind, ctx)
+                    offspring[i] = make_individual(clip_to_bounds(m, lb, ub))
+
+            for ind in offspring:
+                if eval_counter[0] >= max_fes:
+                    break
+                if not ind.fitness.valid:
+                    f = evaluate_fn(np.asarray(ind))
+                    ind.fitness.values = (float(f),)
+                    eval_counter[0] += 1
+            offspring = [o for o in offspring if o.fitness.valid]
+            if not offspring:
+                continue
+
+            isl["pop"] = replace_fn(pop, offspring, ctx)
+
+            cur_best = min(isl["pop"], key=lambda x: x.fitness.values[0])
+            if cur_best.fitness.values[0] < best.fitness.values[0]:
+                best = creator.Individual(list(cur_best))
+                best.fitness.values = cur_best.fitness.values
+                ctx["stagnation_counter"] = 0
+                archived = creator.Individual(list(best))
+                archived.fitness.values = best.fitness.values
+                ctx["archive"].append(archived)
+            else:
+                ctx["stagnation_counter"] += 1
+
+        # Migration: send each island's best to the next island, replace its worst
+        if K > 1 and gen % max(1, config.migration_interval) == 0:
+            best_per_island = [
+                min(isl["pop"], key=lambda x: x.fitness.values[0])
+                for isl in islands
+            ]
+            for k in range(K):
+                src = best_per_island[k]
+                dst_isl = islands[(k + 1) % K]["pop"]
+                worst_idx = max(range(len(dst_isl)),
+                                key=lambda i: dst_isl[i].fitness.values[0])
+                migrant = creator.Individual(list(src))
+                migrant.fitness.values = src.fitness.values
+                dst_isl[worst_idx] = migrant
+
+        if record_history:
+            all_inds = [ind for isl in islands for ind in isl["pop"]]
+            fitnesses = np.array([ind.fitness.values[0] for ind in all_inds])
+            positions = np.array([list(ind) for ind in all_inds])
+            diversity_std = float(np.mean(np.std(positions, axis=0))) if len(positions) else 0.0
+            hussain_div = _hussain_diversity(positions) if len(positions) else 0.0
+            history.append({
+                "gen": gen,
+                "fes": eval_counter[0],
+                "best_fitness": float(best.fitness.values[0]),
+                "mean_fitness": float(fitnesses.mean()) if len(fitnesses) else float("inf"),
+                "diversity": diversity_std,
+                "hussain_div": hussain_div,
+                "xpl_pct": 0.0, "xpt_pct": 0.0,
+                "stagnation_count": 0,
+                "mut_success_rate": 0.0, "cx_success_rate": 0.0,
+                "mean_step_size": 0.0, "selection_pressure": 0.0,
+            })
+
+    error = float(best.fitness.values[0]) - float(problem.f_global)
+    if error < 1e-8:
+        error = 0.0
     return {
         "variant": config.name,
         "seed": seed,

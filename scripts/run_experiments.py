@@ -67,6 +67,165 @@ def build_variants():
             stagnation_threshold=15, restart_fraction=0.2),
     ))
 
+    # ---------- Tier 2 (remaining) ----------
+    variants.append(FeatureConfig(
+        name="SGA+chaotic_tent_init", init_fn=feat.init_chaotic_tent,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+chaotic_sin_init", init_fn=feat.init_chaotic_sinusoidal,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+encircling_mut", mutate_fn=feat.mutate_encircling_prey,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+archive_replace",
+        replace_fn=feat.make_archive_replace(fraction=0.1),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+islands", n_islands=4, migration_interval=10,
+    ))
+
+    # ---------- Tier 3 ----------
+    variants.append(FeatureConfig(
+        name="SGA+spiral_woa_mut", mutate_fn=feat.mutate_spiral_woa,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+sine_cosine_mut", mutate_fn=feat.mutate_sine_cosine,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+poi_select", select_fn=feat.select_probability_of_improvement,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+pollination_mut", mutate_fn=feat.make_pollination_switch(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+firefly_mut", mutate_fn=feat.make_firefly_attraction(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+gauss_cauchy_mut", mutate_fn=feat.make_gauss_cauchy_mix(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+t_gated_mut",
+        mutate_fn=feat.make_t_ratio_gated([
+            (0.5, feat.mutate_levy),
+            (1.0, feat.mutate_encircling_prey),
+        ]),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+periodic_obl",
+        diversity_fn=feat.make_periodic_obl(period=10, fraction=0.3),
+    ))
+
+    # ---------- Tier 4 ----------
+    # Initialization
+    variants.append(FeatureConfig(
+        name="SGA+lhs_init", init_fn=feat.init_latin_hypercube,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+sobol_init", init_fn=feat.init_sobol,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+halton_init", init_fn=feat.init_halton,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+levy_init", init_fn=feat.init_levy_distributed,
+    ))
+    # Selection
+    variants.append(FeatureConfig(
+        name="SGA+adaptive_tourney", select_fn=feat.select_adaptive_tournament,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+archive_mating", select_fn=feat.select_best_archive_mating,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+immigrant",
+        diversity_fn=feat.make_random_immigrant(fraction=0.1),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+crowding_select", select_fn=feat.select_distance_crowding,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+social_rank_select", select_fn=feat.select_social_rank_weighted,
+    ))
+    # Variation
+    variants.append(FeatureConfig(
+        name="SGA+mfo_spiral_mut", mutate_fn=feat.mutate_mfo_spiral,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+bubble_net_mut", mutate_fn=feat.mutate_bubble_net,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+hho_besiege_mut", mutate_fn=feat.mutate_hho_besiege,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+brownian_mut", mutate_fn=feat.make_brownian(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+eddy_fad_mut", mutate_fn=feat.make_eddy_fad(p_jump=0.2),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+bat_mut", mutate_fn=feat.mutate_bat_echolocation,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+gsa_mut", mutate_fn=feat.mutate_gsa_attraction,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+eo_pool_mut", mutate_fn=feat.mutate_equilibrium_pool,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+sma_mut", mutate_fn=feat.mutate_sma_oscillation,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+aquila_mut", mutate_fn=feat.mutate_aquila_4mode,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+rsa_mut", mutate_fn=feat.mutate_rsa_walk_swim,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+noa_cache_mut", mutate_fn=feat.mutate_noa_cache_recover,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+salp_chain_mut", mutate_fn=feat.mutate_salp_chain,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+levy_xover_hybrid_mut",
+        mutate_fn=feat.mutate_levy_crossover_hybrid,
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+oppositional_mut",
+        mutate_fn=feat.make_oppositional_mutate(),
+    ))
+    # Replacement
+    variants.append(FeatureConfig(
+        name="SGA+crowding_replace", replace_fn=feat.replace_crowding,
+    ))
+    # Parameter control
+    variants.append(FeatureConfig(
+        name="SGA+nlin_decay_mut",
+        mutate_fn=feat.make_nonlinear_decay_mutate(base_indpb=0.1, mode="cosine"),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+SHADE_mut", mutate_fn=feat.make_shade_de(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+hho_phase_mut", mutate_fn=feat.make_hho_phase_switch(),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+rank_step_mut", mutate_fn=feat.mutate_rank_step,
+    ))
+    # Diversity / global search
+    variants.append(FeatureConfig(
+        name="SGA+chaotic_perturb_mut",
+        mutate_fn=feat.make_chaotic_perturbation(scale=0.05),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fad_jump",
+        diversity_fn=feat.make_fad_jump(period=10, fraction=0.2),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+qpso_mut", mutate_fn=feat.mutate_quantum_qpso,
+    ))
+
     return variants
 
 
