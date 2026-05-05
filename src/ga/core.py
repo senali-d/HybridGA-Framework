@@ -123,6 +123,15 @@ def evaluate_population(pop, evaluate_fn, eval_counter):
     return n_evals
 
 
+def _hussain_diversity(positions: np.ndarray) -> float:
+    """Hussain et al. diversity:  (1/N) Σᵢ (1/D) Σⱼ |median_j - x_{ij}|.
+    Robust population-spread measure (median-centered, scale-aware)."""
+    if positions.size == 0:
+        return 0.0
+    median = np.median(positions, axis=0)
+    return float(np.mean(np.mean(np.abs(positions - median), axis=1)))
+
+
 def run_sga(
     problem,
     config: FeatureConfig,
@@ -177,6 +186,7 @@ def run_sga(
     history = []
     best = min(population, key=lambda x: x.fitness.values[0])
     ctx["best_so_far"] = best
+    div_max_so_far = 0.0  # for XPL%
 
     # ---- Generational loop ----
     gen = 0
@@ -184,28 +194,41 @@ def run_sga(
         gen += 1
         ctx["gen"] = gen
 
-        # ---- Selection ----
+        # ---- Selection (with selection-pressure tracking) ----
+        pre_select_fits = np.array([ind.fitness.values[0] for ind in population])
         parents = select_fn(population, len(population), ctx)
         parents = [creator.Individual(list(p)) for p in parents]
         for p, src in zip(parents, select_fn(population, len(population), ctx)):
             p.fitness.values = src.fitness.values
+        post_select_fits = np.array([p.fitness.values[0] for p in parents])
+        pre_var = float(np.var(pre_select_fits))
+        post_var = float(np.var(post_select_fits))
+        selection_pressure = pre_var / post_var if post_var > 1e-30 else float("inf")
 
-        # ---- Crossover ----
+        # ---- Crossover (track child→parent mapping for step-size + cx success) ----
         offspring = []
+        cx_parent_idx = []   # index into parents[] for each child's primary parent
+        cx_was_applied = []  # was crossover actually applied to this child?
         for i in range(0, len(parents) - 1, 2):
             p1, p2 = parents[i], parents[i + 1]
             if rng.random() < config.cx_prob:
                 c1, c2 = crossover_fn(p1, p2, ctx)
+                cx_was_applied.extend([True, True])
             else:
                 c1, c2 = list(p1), list(p2)
+                cx_was_applied.extend([False, False])
             offspring.append(make_individual(clip_to_bounds(c1, lb, ub)))
             offspring.append(make_individual(clip_to_bounds(c2, lb, ub)))
+            cx_parent_idx.extend([i, i + 1])
 
-        # ---- Mutation ----
+        # ---- Mutation (track which were mutated and pre-mutation vector) ----
+        mut_was_applied = [False] * len(offspring)
+        pre_mut_vecs = [list(o) for o in offspring]
         for i, ind in enumerate(offspring):
             if rng.random() < config.mut_prob:
                 m = mutate_fn(ind, ctx)
                 offspring[i] = make_individual(clip_to_bounds(m, lb, ub))
+                mut_was_applied[i] = True
 
         # ---- Evaluate offspring (respect FE budget) ----
         for ind in offspring:
@@ -216,6 +239,35 @@ def run_sga(
                 ind.fitness.values = (float(f),)
                 eval_counter[0] += 1
 
+        evaluated_mask = [o.fitness.valid for o in offspring]
+
+        # ---- Operator success rates & step size (over evaluated offspring) ----
+        cx_attempts = cx_successes = 0
+        mut_attempts = mut_successes = 0
+        step_sizes = []
+        for i, child in enumerate(offspring):
+            if not evaluated_mask[i]:
+                continue
+            if cx_parent_idx[i] < len(parents):
+                parent = parents[cx_parent_idx[i]]
+                # step size = ||child - primary parent||₂
+                step_sizes.append(float(np.linalg.norm(
+                    np.asarray(child, dtype=float) - np.asarray(parent, dtype=float))))
+                if cx_was_applied[i]:
+                    cx_attempts += 1
+                    if child.fitness.values[0] < parent.fitness.values[0]:
+                        cx_successes += 1
+            if mut_was_applied[i]:
+                mut_attempts += 1
+                # compare child to its pre-mutation form's parent fitness as proxy
+                parent = parents[cx_parent_idx[i]] if cx_parent_idx[i] < len(parents) else None
+                if parent is not None and child.fitness.values[0] < parent.fitness.values[0]:
+                    mut_successes += 1
+
+        cx_success_rate = (cx_successes / cx_attempts) if cx_attempts else 0.0
+        mut_success_rate = (mut_successes / mut_attempts) if mut_attempts else 0.0
+        mean_step_size = float(np.mean(step_sizes)) if step_sizes else 0.0
+
         # Drop unevaluated trailing offspring (budget exhausted)
         offspring = [o for o in offspring if o.fitness.valid]
 
@@ -225,7 +277,7 @@ def run_sga(
         # ---- Replacement ----
         population = replace_fn(population, offspring, ctx)
 
-        # ---- Optional diversity injection (e.g., random immigrants) ----
+        # ---- Optional diversity injection ----
         if config.diversity_fn is not None:
             population = config.diversity_fn(population, ctx)
             for ind in population:
@@ -247,13 +299,24 @@ def run_sga(
         if record_history:
             fitnesses = np.array([ind.fitness.values[0] for ind in population])
             positions = np.array([list(ind) for ind in population])
-            diversity = float(np.mean(np.std(positions, axis=0)))
+            diversity_std = float(np.mean(np.std(positions, axis=0)))
+            hussain_div = _hussain_diversity(positions)
+            div_max_so_far = max(div_max_so_far, hussain_div)
+            xpl_pct = 100.0 * hussain_div / div_max_so_far if div_max_so_far > 0 else 0.0
             history.append({
                 "gen": gen,
                 "fes": eval_counter[0],
                 "best_fitness": float(best.fitness.values[0]),
                 "mean_fitness": float(fitnesses.mean()),
-                "diversity": diversity,
+                "diversity": diversity_std,
+                "hussain_div": hussain_div,
+                "xpl_pct": xpl_pct,
+                "xpt_pct": 100.0 - xpl_pct,
+                "stagnation_count": int(ctx["stagnation_counter"]),
+                "mut_success_rate": mut_success_rate,
+                "cx_success_rate": cx_success_rate,
+                "mean_step_size": mean_step_size,
+                "selection_pressure": selection_pressure if np.isfinite(selection_pressure) else 0.0,
             })
 
     error = float(best.fitness.values[0]) - float(problem.f_global)

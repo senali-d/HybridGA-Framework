@@ -20,8 +20,13 @@ CEC2022_FUNCS = [
 ]
 
 
-def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50):
-    """Returns dict[variant_name][func_name] -> list of error values across runs."""
+def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
+                 recorder=None, record_history=True):
+    """Returns dict[variant_name][func_name] -> list of error values across runs.
+
+    If `recorder` is provided, every run's full result (including history)
+    is also pushed to it via `recorder.add_run(...)`.
+    """
     results = {v.name: {} for v in variants}
     total_jobs = len(variants) * len(CEC2022_FUNCS) * n_runs
     job = 0
@@ -33,15 +38,19 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50):
             errors = []
             for seed in range(n_runs):
                 job += 1
+                t_run = time.time()
                 r = run_sga(
                     problem=problem,
                     config=variant,
                     pop_size=pop_size,
                     max_fes=max_fes,
                     seed=seed,
-                    record_history=False,
+                    record_history=record_history,
                 )
+                runtime_s = time.time() - t_run
                 errors.append(r["error"])
+                if recorder is not None:
+                    recorder.add_run(variant.name, func_name, seed, r, runtime_s)
             results[variant.name][func_name] = errors
             elapsed = time.time() - t0
             print(f"  [{job}/{total_jobs}] {func_name} x {variant.name}: "

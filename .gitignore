@@ -33,4 +33,4 @@ dist/
 *.zip
 
 # Experiment outputs
-results/*.json
+results/

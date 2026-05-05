@@ -12,6 +12,13 @@ dependencies = [
     "opfunu",
     "scipy",
     "numpy",
+    "pandas",
+    "pyarrow",
+    "matplotlib",
+    "seaborn",
+    "scikit-posthocs",
+    "statsmodels",
+    "setuptools<81",
 ]
 
 [tool.setuptools.packages.find]
