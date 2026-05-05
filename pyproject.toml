@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybridga"
+version = "0.1.0"
+description = "SGA + nature-inspired features on CEC 2022"
+requires-python = ">=3.9"
+dependencies = [
+    "deap",
+    "opfunu",
+    "scipy",
+    "numpy",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

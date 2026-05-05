@@ -1,4 +1,0 @@
-deap
-opfunu
-scipy
-numpy

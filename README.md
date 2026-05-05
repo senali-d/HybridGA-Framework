@@ -8,24 +8,42 @@ Algorithm. Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022 functions)
 ## Project layout
 
 ```
-sga_pipeline/
-├── sga_core.py          # SGA backbone with swappable operator plug-points
-├── features.py          # Drop-in implementations of NI-algorithm features
-├── run_experiments.py   # Multi-variant runner with Wilcoxon + Friedman
-└── README.md            # This file
+HybridGA-Framework/
+├── src/
+│   ├── ga/              # SGA backbone + nature-inspired feature plug-ins
+│   │   ├── core.py
+│   │   └── features.py
+│   ├── benchmarks/      # CEC 2022 wrappers + multi-variant protocol runner
+│   │   └── cec2022.py
+│   └── analysis/        # Statistical summaries (Wilcoxon, Friedman, plotting)
+│       └── stats.py
+├── scripts/
+│   └── run_experiments.py   # CLI entry point
+├── results/             # Raw JSON outputs (gitignored)
+├── pyproject.toml
+└── README.md
 ```
 
 ## Quick start
 
 ```bash
-pip install deap opfunu scipy numpy
+# 1. Create and activate a virtual environment (first time only)
+python -m venv venv
+source venv/bin/activate          # macOS / Linux
+# venv\Scripts\activate           # Windows PowerShell
+
+# 2. Install the project + all dependencies
+pip install -e .
+
+# 3. Every new shell, just reactivate:
+#    source venv/bin/activate
 
 # Demo: small budget, ~1 minute, sanity-check the pipeline
-python run_experiments.py
+python scripts/run_experiments.py
 
 # Full CEC 2022 protocol: 12 functions, 30 runs, MaxFES per spec
-python run_experiments.py --full --dim 10
-python run_experiments.py --full --dim 20
+python scripts/run_experiments.py --full --dim 10
+python scripts/run_experiments.py --full --dim 20
 ```
 
 ## How feature injection works
@@ -35,8 +53,8 @@ SGA's plug-points. The default operators stay in place for everything not
 overridden, so you can isolate the effect of a single feature.
 
 ```python
-from sga_core import FeatureConfig, run_sga
-import features as feat
+from ga.core import FeatureConfig, run_sga
+from ga import features as feat
 from opfunu.cec_based.cec2022 import F12022
 
 # Define a variant that injects Lévy-flight mutation
@@ -64,8 +82,9 @@ print(f"Error vs F*: {result['error']}")
 | F39 | Stagnation-triggered restart | diversity_fn |
 | F40 | Linearly decreasing mutation rate | mutate_fn |
 
-Add Tier 3 features by writing more functions in `features.py` matching the
-same signatures, then registering them in `build_variants()`.
+Add Tier 3 features by writing more functions in `src/ga/features.py` matching
+the same signatures, then registering them in `build_variants()` inside
+`scripts/run_experiments.py`.
 
 ## CEC 2022 protocol compliance
 
