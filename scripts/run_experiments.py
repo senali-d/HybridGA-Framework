@@ -358,6 +358,11 @@ def main():
                         help="Comma-separated substrings; only variants whose "
                              "name contains any of these are run. Baseline is "
                              "always included. Example: --variants pher,levy")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Process-pool workers over (variant, function, "
+                             "seed) tuples. Default 1 (sequential). Uses fork "
+                             "start method, so closures inside variants are "
+                             "fine. Results are seed-deterministic.")
     args = parser.parse_args()
 
     if args.full:
@@ -396,6 +401,7 @@ def main():
         variants, dim=args.dim, n_runs=n_runs,
         max_fes=max_fes, pop_size=pop_size,
         recorder=recorder, record_history=not args.no_history,
+        workers=args.workers,
     )
 
     summarize(results, baseline_name=args.baseline)

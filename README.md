@@ -108,14 +108,18 @@ the same signatures, then registering them in `build_variants()` inside
 
 ## Compute notes
 
-- **Demo run** (5 runs, MaxFES=5000, 8 variants, 12 functions): ~3 minutes
-- **Full run** at D=10 (30 runs, MaxFES=200k, 8 variants, 12 functions):
-  roughly 1–2 hours per variant on a single core, so 8–16 hours total.
-  Trivially parallelizable across (variant, function, seed) tuples.
-- **Full run at D=20** is roughly 5× heavier.
+- **Demo run** (5 runs, MaxFES=5000, ~75 variants, 12 functions): ~3 minutes
+- **Full run** at D=10 (30 runs, MaxFES=200k, ~75 variants, 12 functions):
+  roughly 1–2 hours per variant on a single core; with the full variant set
+  this is multi-day on one core. Use `--workers N` to parallelize across
+  `(variant, function, seed)` tuples on N processes (fork-based, so feature
+  closures are fine; results are seed-deterministic).
+- **Full run at D=20** is roughly 5× heavier per variant.
 
-To parallelize, wrap the inner `run_sga` call in `multiprocessing.Pool.map`.
-The function is pure so it's safe for parallel execution.
+```bash
+python scripts/run_experiments.py --full --dim 10 --workers 8
+python scripts/run_experiments.py --variants pher,levy --workers 4
+```
 
 ## Behavioral metrics (in `history` dict)
 
