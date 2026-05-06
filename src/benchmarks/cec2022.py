@@ -53,7 +53,8 @@ def _worker_run_one(args):
 
 
 def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
-                 recorder=None, record_history=True, workers=1):
+                 recorder=None, record_history=True, workers=1,
+                 functions=None):
     """Returns dict[variant_name][func_name] -> list of error values across
     runs (sorted by seed). If `recorder` is provided, every run's full
     result is also pushed to it via `recorder.add_run(...)`.
@@ -66,13 +67,25 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
         an independent job. `run_sga` is pure and seed-deterministic, so
         results are identical regardless of `workers`.
     """
-    total_jobs = len(variants) * len(CEC2022_FUNCS) * n_runs
+    if functions is None:
+        funcs = list(CEC2022_FUNCS)
+    else:
+        wanted = [f.strip() for f in functions if f.strip()]
+        unknown = [f for f in wanted if f not in _FUNCS_BY_NAME]
+        if unknown:
+            raise ValueError(
+                f"Unknown CEC2022 function(s): {unknown}. "
+                f"Valid: {[fn for fn, _ in CEC2022_FUNCS]}"
+            )
+        funcs = [(fn, _FUNCS_BY_NAME[fn]) for fn in wanted]
+
+    total_jobs = len(variants) * len(funcs) * n_runs
     t0 = time.time()
 
     # Per-(variant, function): seed -> error, so we can reassemble in seed
     # order regardless of completion order under parallelism.
     err_by_seed: dict = {
-        v.name: {fn: {} for fn, _ in CEC2022_FUNCS} for v in variants
+        v.name: {fn: {} for fn, _ in funcs} for v in variants
     }
 
     if workers > 1:
@@ -97,7 +110,7 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
     if workers > 1:
         all_args = [
             (v.name, fn, seed)
-            for fn, _ in CEC2022_FUNCS
+            for fn, _ in funcs
             for v in variants
             for seed in range(n_runs)
         ]
@@ -121,7 +134,7 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
     else:
         # Sequential path with rich per-(function, variant) progress lines.
         job = 0
-        for func_name, FCls in CEC2022_FUNCS:
+        for func_name, FCls in funcs:
             problem = FCls(ndim=dim)
             for variant in variants:
                 for seed in range(n_runs):
@@ -147,7 +160,7 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
     results = {
         v.name: {
             fn: [err_by_seed[v.name][fn][s] for s in sorted(err_by_seed[v.name][fn])]
-            for fn, _ in CEC2022_FUNCS
+            for fn, _ in funcs
         }
         for v in variants
     }

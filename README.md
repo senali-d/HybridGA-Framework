@@ -48,6 +48,10 @@ python scripts/run_experiments.py --full --dim 20
 # Custom budget — every protocol parameter is a flag
 python scripts/run_experiments.py --pop-size 40 --max-gen 200 --n-runs 10
 python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
+
+# Restrict to a subset of CEC 2022 functions (single or multiple)
+python scripts/run_experiments.py --variants SGA_baseline --functions F1
+python scripts/run_experiments.py --functions F1,F3,F7 --workers 6
 ```
 
 ### Protocol flags
@@ -60,6 +64,7 @@ python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
 | `--max-gen` | — | Cap by generations instead; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
 | `--variants` | (all) | Comma-separated substring filter, e.g. `pher,levy` |
+| `--functions` | (all 12) | Comma-separated CEC 2022 function names, e.g. `F1` or `F1,F3,F7` |
 | `--workers` | 1 | Process-pool size; results are seed-deterministic |
 | `--no-history` / `--no-plots` / `--no-stats` | off | Skip outputs |
 | `--tag` | timestamp | Override archive folder name |

@@ -378,6 +378,9 @@ def main():
     parser.add_argument("--max-gen", type=int, default=None,
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
+    parser.add_argument("--functions", type=str, default=None,
+                        help="Comma-separated CEC 2022 function names to run "
+                             "(e.g. F1 or F1,F3,F7). Default: all 12.")
     parser.add_argument("--n-runs", type=int, default=None,
                         help="Independent seeds per (variant, function). "
                              "Default: 5 (demo) / 30 (full).")
@@ -431,11 +434,16 @@ def main():
         tag=args.tag,
     )
 
+    funcs_filter = (
+        [s.strip() for s in args.functions.split(",") if s.strip()]
+        if args.functions else None
+    )
+
     results = run_protocol(
         variants, dim=args.dim, n_runs=n_runs,
         max_fes=max_fes, pop_size=pop_size,
         recorder=recorder, record_history=not args.no_history,
-        workers=args.workers,
+        workers=args.workers, functions=funcs_filter,
     )
 
     summarize(results, baseline_name=args.baseline)
