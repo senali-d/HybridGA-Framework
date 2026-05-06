@@ -67,6 +67,40 @@ def build_variants():
             stagnation_threshold=15, restart_fraction=0.2),
     ))
 
+    variants.append(FeatureConfig(
+        name="SGA+CLONALG_hyper",
+        mutate_fn=feat.make_inverse_hypermutate(rho=5.0, sigma_max=0.2),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+clonal_expand", select_fn=feat.select_clonal_expansion,
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_evap",
+        mutate_fn=feat.make_pheromone_evaporation(rho=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_deposit",
+        mutate_fn=feat.make_pheromone_deposit(rho=0.1, Q=1.0),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_heuristic",
+        mutate_fn=feat.make_pheromone_heuristic(rho=0.1, alpha=1.0, beta=2.0),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_minmax",
+        mutate_fn=feat.make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_eas",
+        mutate_fn=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
+    ))
+
     # ---------- Tier 2 (remaining) ----------
     variants.append(FeatureConfig(
         name="SGA+chaotic_tent_init", init_fn=feat.init_chaotic_tent,
@@ -83,6 +117,41 @@ def build_variants():
     ))
     variants.append(FeatureConfig(
         name="SGA+islands", n_islands=4, migration_interval=10,
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+aging",
+        diversity_fn=feat.make_aging_replace(tau=20),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+receptor_edit",
+        diversity_fn=feat.make_receptor_editing(fraction=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+affinity_gauss",
+        mutate_fn=feat.make_affinity_gaussian(sigma_max=0.2, rho=2.0),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_asrank",
+        mutate_fn=feat.make_pheromone_asrank(rho=0.1, w=6),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_edge_cx",
+        crossover_fn=feat.make_pheromone_edge_crossover(rho=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_weighted_cx",
+        crossover_fn=feat.make_pheromone_weighted_crossover(rho=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_candlist",
+        select_fn=feat.make_candidate_list_select(m=5, tournsize=2),
     ))
 
     # ---------- Tier 3 ----------
@@ -114,6 +183,42 @@ def build_variants():
     variants.append(FeatureConfig(
         name="SGA+periodic_obl",
         diversity_fn=feat.make_periodic_obl(period=10, fraction=0.3),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+neg_select",
+        mutate_fn=feat.make_negative_selection(threshold=0.05, push=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+immune_memory",
+        diversity_fn=feat.make_immune_memory_pool(k_inject=2, dist_thresh_frac=0.05),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+adaptive_pop",
+        replace_fn=feat.make_adaptive_resize(min_n=20, max_n=80, target_div_frac=0.05),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+multiparent_cx",
+        crossover_fn=feat.crossover_multiparent,
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+net_suppress",
+        diversity_fn=feat.make_network_suppression(threshold_frac=0.02),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+cauchy_elite",
+        mutate_fn=feat.make_cauchy_hypermutate_elite(elite_frac=0.2, scale=0.1),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+pher_guided_mut",
+        mutate_fn=feat.make_pheromone_guided_mutation(
+            rho=0.1, alpha=1.0, beta=2.0),
     ))
 
     # ---------- Tier 4 ----------
@@ -224,6 +329,11 @@ def build_variants():
     ))
     variants.append(FeatureConfig(
         name="SGA+qpso_mut", mutate_fn=feat.mutate_quantum_qpso,
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+danger_signal",
+        mutate_fn=feat.make_danger_signal(stag_threshold=10, boost=5.0),
     ))
 
     return variants

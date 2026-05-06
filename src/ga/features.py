@@ -4,8 +4,13 @@ features.py
 Drop-in implementations of nature-inspired algorithm features.
 Each function matches the signature expected by `FeatureConfig` in sga_core.py.
 
-These are the Tier 1 and Tier 2 features from the framework document.
-Add more as you progress to Tier 3 / Tier 4.
+Three families, all numbered in a single F-series:
+  - F01–F50: nature-inspired (chaotic, Lévy/DE/SHADE, GWO/WOA/HHO/SCA/FPA,
+    firefly/GSA/EO/SMA/Aquila/RSA/NOA/salp/MFO/bat/QPSO, etc.)
+  - F51–F62: artificial immune system (CLONALG, opt-IA, opt-aiNet,
+    negative selection, danger theory, HFIA)
+  - F63–F72: ant-colony / pheromone (binned per-dim pheromone matrix;
+    AS / EAS / MMAS / ASrank / heuristic / candidate-list)
 
 References for each feature are in the framework PDF (Section 5).
 """
@@ -1146,6 +1151,346 @@ def make_fad_jump(period=10, fraction=0.2):
 # ============================================================
 # F50 — Quantum (QPSO) probabilistic update
 # ============================================================
+def _norm_fitness_rank(pop, ind):
+    """Return rank of `ind` within `pop` normalised to [0,1] (0 = best)."""
+    sorted_pop = _sorted_pop(pop)
+    n = len(sorted_pop)
+    try:
+        my_fit = ind.fitness.values[0]
+    except Exception:
+        return 0.5
+    for i, p in enumerate(sorted_pop):
+        if p.fitness.values[0] >= my_fit:
+            return i / max(1, n - 1)
+    return 1.0
+
+
+# ============================================================
+# F51 — Inversely Proportional Hypermutation (CLONALG)
+# ============================================================
+def make_inverse_hypermutate(rho=5.0, sigma_max=0.2):
+    """Step size shrinks for fitter individuals: sigma ~ sigma_max*exp(-rho*r),
+    where r is the normalised rank (0=best, 1=worst)."""
+    def mutate_inverse(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pop = ctx.get("_population", [])
+        r = _norm_fitness_rank(pop, ind) if pop else 0.5
+        # Better individuals (small r) should mutate LESS, so we use exp(-rho*(1-r))
+        # Per CLONALG the convention is 'better antibody -> smaller step size'.
+        sigma = sigma_max * np.exp(-rho * (1.0 - r))
+        x = _arr(ind)
+        step = rng.normal(0, 1, ctx["dim"]) * sigma * (ub - lb)
+        return np.clip(x + step, lb, ub).tolist()
+    return mutate_inverse
+
+
+# ============================================================
+# F52 — Clonal Expansion (better individuals get more clones)
+# ============================================================
+def select_clonal_expansion(population, k, ctx):
+    """Top half gets 2x copies, next quarter gets 1x, bottom quarter discarded.
+    Truncate or repeat to exactly k individuals."""
+    sorted_pop = _sorted_pop(population)
+    n = len(sorted_pop)
+    top_half = sorted_pop[: n // 2]
+    next_quarter = sorted_pop[n // 2: 3 * n // 4]
+    pool = []
+    for ind in top_half:
+        pool.append(ind); pool.append(ind)
+    pool.extend(next_quarter)
+    if len(pool) < k:
+        # pad with cycling top
+        i = 0
+        while len(pool) < k:
+            pool.append(top_half[i % max(1, len(top_half))])
+            i += 1
+    pool = pool[:k]
+    out = []
+    for c in pool:
+        ind = creator.Individual(list(c))
+        ind.fitness.values = c.fitness.values
+        if hasattr(c, "age"):
+            ind.age = c.age
+        out.append(ind)
+    return out
+
+
+# ============================================================
+# F53 — Aging / Lifespan removal (opt-IA)
+# ============================================================
+def make_aging_replace(tau=20):
+    """Drop any individual whose .age >= tau and refill with random."""
+    def diversity_aging(population, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        survivors = [ind for ind in population if getattr(ind, "age", 0) < tau]
+        n_drop = len(population) - len(survivors)
+        if n_drop == 0:
+            return population
+        fresh = []
+        for _ in range(n_drop):
+            v = rng.uniform(lb, ub).tolist()
+            fresh.append(creator.Individual(v))
+        return survivors + fresh
+    return diversity_aging
+
+
+# ============================================================
+# F54 — Receptor Editing (every-gen replace worst k%)
+# ============================================================
+def make_receptor_editing(fraction=0.1):
+    """Differs from F39 (stagnation-triggered) by firing every generation."""
+    def diversity_receptor(population, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        n_drop = max(1, int(len(population) * fraction))
+        sorted_pop = _sorted_pop(population)
+        keep = sorted_pop[: len(population) - n_drop]
+        fresh = []
+        for _ in range(n_drop):
+            v = rng.uniform(lb, ub).tolist()
+            fresh.append(creator.Individual(v))
+        return keep + fresh
+    return diversity_receptor
+
+
+# ============================================================
+# F55 — Negative Selection (push away from known optima)
+# ============================================================
+def make_negative_selection(threshold=0.05, push=0.1):
+    """If the mutated point is closer than `threshold * range` to any
+    archived best, displace it radially away by `push * range`."""
+    def mutate_neg_select(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        # base mutation (polynomial)
+        base, = tools.mutPolynomialBounded(
+            list(ind), eta=20.0,
+            low=lb.tolist(), up=ub.tolist(),
+            indpb=1.0 / ctx["dim"],
+        )
+        x = _arr(base)
+        archive = list(ctx.get("archive", []))
+        if not archive:
+            return base
+        rng_span = ub - lb
+        thr = threshold * np.linalg.norm(rng_span)
+        for tabu in archive:
+            ta = _arr(tabu)
+            d_vec = x - ta
+            d = float(np.linalg.norm(d_vec))
+            if d < thr and d > 1e-12:
+                x = x + (push * rng_span * d_vec / d)
+            elif d <= 1e-12:
+                x = x + 0.1 * rng_span * rng.normal(0, 1, ctx["dim"])
+        return np.clip(x, lb, ub).tolist()
+    return mutate_neg_select
+
+
+# ============================================================
+# F56 — Affinity-Based Gaussian Mutation (opt-aiNet)
+# ============================================================
+def make_affinity_gaussian(sigma_max=0.2, rho=2.0):
+    """sigma_i = sigma_max * exp(-rho * normalized_fitness_in_[0,1])
+    Where 0 = best (so best gets smallest step). Rank-based proxy."""
+    def mutate_affinity(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pop = ctx.get("_population", [])
+        r = _norm_fitness_rank(pop, ind) if pop else 0.5
+        # Better fitness (smaller r) -> larger sigma (CLONALG-style affinity).
+        # opt-aiNet says "step ~ exp(-rho*f_norm)"; we use (1-r) as f_norm.
+        sigma = sigma_max * np.exp(-rho * r)
+        x = _arr(ind)
+        step = rng.normal(0, 1, ctx["dim"]) * sigma * (ub - lb)
+        return np.clip(x + step, lb, ub).tolist()
+    return mutate_affinity
+
+
+# ============================================================
+# F57 — Immune Memory Pool (diversity-aware archive injection)
+# ============================================================
+def make_immune_memory_pool(k_inject=2, dist_thresh_frac=0.05):
+    """Maintain a separate diverse archive in ctx['immune_memory'] and
+    inject k_inject members each generation into the worst slots.
+    Membership rule: a candidate joins if its distance to all current
+    members exceeds dist_thresh_frac * range_norm and pool < capacity.
+    """
+    def diversity_immune(population, ctx):
+        lb, ub = ctx["lb"], ctx["ub"]
+        memory = ctx.setdefault("immune_memory", [])
+        # Update memory with current best if it's "novel enough"
+        rng_norm = float(np.linalg.norm(ub - lb))
+        thr = dist_thresh_frac * rng_norm
+        cur_best = _best_in_pop(population)
+        ca = _arr(cur_best)
+        if not memory:
+            mem_clone = creator.Individual(list(cur_best))
+            mem_clone.fitness.values = cur_best.fitness.values
+            memory.append(mem_clone)
+        else:
+            min_d = min(np.linalg.norm(ca - _arr(m)) for m in memory)
+            if min_d > thr and len(memory) < 20:
+                mem_clone = creator.Individual(list(cur_best))
+                mem_clone.fitness.values = cur_best.fitness.values
+                memory.append(mem_clone)
+        # Inject from memory into worst slots
+        if not memory:
+            return population
+        sorted_pop = _sorted_pop(population)
+        n_inject = min(k_inject, len(memory), len(population) // 2)
+        keep = sorted_pop[: len(population) - n_inject]
+        injected = []
+        for m in memory[-n_inject:]:
+            clone = creator.Individual(list(m))
+            clone.fitness.values = m.fitness.values
+            injected.append(clone)
+        return keep + injected
+    return diversity_immune
+
+
+# ============================================================
+# F58 — Adaptive Population Resizing
+# ============================================================
+def make_adaptive_resize(min_n=20, max_n=100, target_div_frac=0.05):
+    """If Hussain diversity < target -> grow (add random); if > 2*target -> shrink (drop worst).
+    Pop size is clamped to [min_n, max_n]."""
+    def replace_adaptive(parents, offspring, ctx):
+        # default replacement first
+        k = ctx["elitism_k"]
+        parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
+        elites = parents_sorted[:k]
+        offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
+        new_pop = elites + offspring_sorted[: len(parents) - k]
+        # diversity measure
+        positions = np.array([list(p) for p in new_pop], dtype=float)
+        if positions.size == 0:
+            return new_pop
+        med = np.median(positions, axis=0)
+        div = float(np.mean(np.mean(np.abs(positions - med), axis=1)))
+        rng_norm = float(np.linalg.norm(ctx["ub"] - ctx["lb"]))
+        target = target_div_frac * rng_norm
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        if div < target and len(new_pop) < max_n:
+            # grow by 10%
+            n_add = max(1, len(new_pop) // 10)
+            for _ in range(n_add):
+                v = rng.uniform(lb, ub).tolist()
+                new_pop.append(creator.Individual(v))
+        elif div > 2 * target and len(new_pop) > min_n:
+            # shrink by 10% (drop worst)
+            n_drop = max(1, len(new_pop) // 10)
+            new_pop = sorted(new_pop, key=lambda x: x.fitness.values[0])[: len(new_pop) - n_drop]
+        return new_pop
+    return replace_adaptive
+
+
+# ============================================================
+# F59 — Combinatorial Recombination (multi-parent crossover)
+# ============================================================
+def crossover_multiparent(p1, p2, ctx):
+    """Blend p1, p2, and one random extra from population per dim coordinate."""
+    rng = ctx["rng"]
+    lb, ub = ctx["lb"], ctx["ub"]
+    pop = ctx.get("_population", [])
+    if pop:
+        p3 = pop[rng.integers(0, len(pop))]
+    else:
+        p3 = p1
+    a, b, c = _arr(p1), _arr(p2), _arr(p3)
+    mask1 = rng.random(ctx["dim"])
+    mask2 = rng.random(ctx["dim"])
+    mask2 = mask2 / (mask1 + mask2 + 1e-9)
+    mask1 = 1.0 - mask2
+    # Convex combination per dim across three parents
+    w1 = rng.random(ctx["dim"]); w2 = rng.random(ctx["dim"]); w3 = rng.random(ctx["dim"])
+    s = w1 + w2 + w3
+    w1, w2, w3 = w1 / s, w2 / s, w3 / s
+    c1 = w1 * a + w2 * b + w3 * c
+    c2 = w3 * a + w1 * b + w2 * c
+    return (np.clip(c1, lb, ub).tolist(), np.clip(c2, lb, ub).tolist())
+
+
+# ============================================================
+# F60 — Immune Network Suppression (remove too-similar members)
+# ============================================================
+def make_network_suppression(threshold_frac=0.02):
+    """If two individuals are within threshold (Euclidean), drop the worse
+    and refill with a random replacement."""
+    def diversity_suppress(population, ctx):
+        lb, ub = ctx["lb"], ctx["ub"]
+        rng = ctx["rng"]
+        rng_norm = float(np.linalg.norm(ub - lb))
+        thr = threshold_frac * rng_norm
+        pop = list(population)
+        arrays = [_arr(p) for p in pop]
+        keep_mask = [True] * len(pop)
+        for i in range(len(pop)):
+            if not keep_mask[i]:
+                continue
+            for j in range(i + 1, len(pop)):
+                if not keep_mask[j]:
+                    continue
+                if np.linalg.norm(arrays[i] - arrays[j]) < thr:
+                    # Drop the worse
+                    if pop[i].fitness.values[0] <= pop[j].fitness.values[0]:
+                        keep_mask[j] = False
+                    else:
+                        keep_mask[i] = False; break
+        survivors = [pop[i] for i in range(len(pop)) if keep_mask[i]]
+        n_replace = len(pop) - len(survivors)
+        for _ in range(n_replace):
+            v = rng.uniform(lb, ub).tolist()
+            survivors.append(creator.Individual(v))
+        return survivors
+    return diversity_suppress
+
+
+# ============================================================
+# F61 — Danger Theory Signaling (boost step on stagnation)
+# ============================================================
+def make_danger_signal(stag_threshold=10, boost=5.0):
+    """When stagnation_counter exceeds threshold, multiply mutation step
+    size by `boost` to escape the basin."""
+    def mutate_danger(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        x = _arr(ind)
+        scale = 0.05
+        if ctx.get("stagnation_counter", 0) >= stag_threshold:
+            scale *= boost
+        step = rng.normal(0, 1, ctx["dim"]) * scale * (ub - lb)
+        return np.clip(x + step, lb, ub).tolist()
+    return mutate_danger
+
+
+# ============================================================
+# F62 — Cauchy Hypermutation on elites (HFIA)
+# ============================================================
+def make_cauchy_hypermutate_elite(elite_frac=0.2, scale=0.1):
+    """Top elite_frac of the population gets a heavy-tailed Cauchy step;
+    everyone else falls back to standard polynomial mutation."""
+    def mutate_cauchy_elite(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pop = ctx.get("_population", [])
+        r = _norm_fitness_rank(pop, ind) if pop else 0.5
+        if r <= elite_frac:
+            x = _arr(ind)
+            step = rng.standard_cauchy(ctx["dim"]) * scale * (ub - lb)
+            return np.clip(x + step, lb, ub).tolist()
+        else:
+            mutated, = tools.mutPolynomialBounded(
+                list(ind), eta=20.0,
+                low=lb.tolist(), up=ub.tolist(),
+                indpb=1.0 / ctx["dim"],
+            )
+            return mutated
+    return mutate_cauchy_elite
+
+
 def mutate_quantum_qpso(ind, ctx):
     rng = ctx["rng"]
     lb, ub = ctx["lb"], ctx["ub"]
@@ -1162,3 +1507,359 @@ def mutate_quantum_qpso(ind, ctx):
     sign = np.where(rng.random(ctx["dim"]) < 0.5, 1.0, -1.0)
     new = p_attr + sign * beta * np.abs(mbest - x) * np.log(1.0 / np.maximum(u, 1e-9))
     return np.clip(new, lb, ub).tolist()
+
+
+# ============================================================
+# ANT COLONY / PHEROMONE FEATURES (F63–F72) — continuation of F-series
+# ============================================================
+# Continuous-domain adaptation: per-dimension binned pheromone matrix.
+# A (dim, K) array `tau` lives in ctx["pheromone"]; each row is a dimension
+# and each column is a discretized bin of [lb_d, ub_d]. All ACO features
+# share this matrix via ctx.setdefault, so they compose if multiple are
+# active, but each is also self-contained: it lazy-inits the matrix and
+# runs evaporation + deposit once per generation (gated by a sentinel).
+
+def _pheromone_init(ctx, K=20, tau0=1.0, tau_min=0.01, tau_max=10.0):
+    if "pheromone" in ctx:
+        return ctx["pheromone"]
+    state = {
+        "tau": np.full((ctx["dim"], K), tau0, dtype=float),
+        "K": K,
+        "tau_min": tau_min,
+        "tau_max": tau_max,
+    }
+    ctx["pheromone"] = state
+    ctx["_pheromone_last_gen"] = -1
+    return state
+
+
+def _bin_index_scalar(x, lb_d, ub_d, K):
+    span = (ub_d - lb_d) if (ub_d - lb_d) > 0 else 1.0
+    frac = (float(x) - float(lb_d)) / float(span)
+    return int(np.clip(int(frac * K), 0, K - 1))
+
+
+def _bin_centers(lb, ub, K):
+    edges = np.linspace(0.0, 1.0, K + 1)
+    mids = 0.5 * (edges[:-1] + edges[1:])
+    lb_a = np.asarray(lb, dtype=float)
+    ub_a = np.asarray(ub, dtype=float)
+    return lb_a[:, None] + mids[None, :] * (ub_a - lb_a)[:, None]
+
+
+def _deposit_individual(tau, ind_vec, amount, lb, ub, K):
+    lb_a = np.asarray(lb, dtype=float)
+    ub_a = np.asarray(ub, dtype=float)
+    span = ub_a - lb_a
+    span = np.where(span <= 0, 1.0, span)
+    fracs = (np.asarray(ind_vec, dtype=float) - lb_a) / span
+    bins = np.clip((fracs * K).astype(int), 0, K - 1)
+    for d, b in enumerate(bins):
+        tau[d, int(b)] += amount
+
+
+def _sample_dim_value(tau_row, lb_d, ub_d, K, rng,
+                      alpha=1.0, eta_row=None, beta=0.0):
+    w = np.asarray(tau_row, dtype=float) ** alpha
+    if eta_row is not None and beta != 0.0:
+        w = w * (np.asarray(eta_row, dtype=float) ** beta)
+    w_sum = float(w.sum())
+    if not np.isfinite(w_sum) or w_sum <= 0:
+        b = int(rng.integers(0, K))
+    else:
+        p = w / w_sum
+        b = int(rng.choice(K, p=p))
+    span = (float(ub_d) - float(lb_d)) / K
+    return float(lb_d) + (b + float(rng.random())) * span
+
+
+def _eta_from_best(ctx, K):
+    """Per-bin eta heuristic: 1 / (1 + |bin_center − x_best_d|).
+    Returns (dim, K) array, or None if best_so_far isn't set."""
+    best = ctx.get("best_so_far")
+    if best is None:
+        return None
+    centers = _bin_centers(ctx["lb"], ctx["ub"], K)
+    xb = np.asarray(list(best), dtype=float)[:, None]
+    return 1.0 / (1.0 + np.abs(centers - xb))
+
+
+def _maybe_evaporate_and_deposit(ctx, rho, deposit_strategy,
+                                 Q=1.0, e=5.0, w=6, clip=False):
+    """Run evaporate + deposit at most once per generation."""
+    if ctx.get("_pheromone_last_gen") == ctx["gen"]:
+        return
+    pher = ctx["pheromone"]
+    tau, K = pher["tau"], pher["K"]
+    lb, ub = ctx["lb"], ctx["ub"]
+    tau *= (1.0 - rho)
+    pop = ctx.get("_population", [])
+
+    def _fit(p):
+        try:
+            return float(p.fitness.values[0])
+        except Exception:
+            return None
+
+    if deposit_strategy in ("as", "eas") and pop:
+        for p in pop:
+            f = _fit(p)
+            if f is None:
+                continue
+            _deposit_individual(tau, p, Q / (1.0 + max(0.0, f)), lb, ub, K)
+        if deposit_strategy == "eas":
+            best = ctx.get("best_so_far")
+            if best is not None:
+                fb = _fit(best)
+                if fb is not None:
+                    _deposit_individual(tau, best,
+                                        e * Q / (1.0 + max(0.0, fb)),
+                                        lb, ub, K)
+    elif deposit_strategy == "asrank" and pop:
+        sorted_pop = _sorted_pop(pop)
+        top = sorted_pop[: max(1, w - 1)]
+        for r, p in enumerate(top):
+            f = _fit(p)
+            if f is None:
+                continue
+            weight = (w - 1 - r) * Q / (1.0 + max(0.0, f))
+            _deposit_individual(tau, p, weight, lb, ub, K)
+        best = ctx.get("best_so_far")
+        if best is not None:
+            fb = _fit(best)
+            if fb is not None:
+                _deposit_individual(tau, best,
+                                    w * Q / (1.0 + max(0.0, fb)),
+                                    lb, ub, K)
+
+    if clip:
+        np.clip(tau, pher["tau_min"], pher["tau_max"], out=tau)
+    ctx["_pheromone_last_gen"] = ctx["gen"]
+
+
+# ============================================================
+# F63 — Pheromone Evaporation
+# ============================================================
+def make_pheromone_evaporation(rho=0.1, K=20, alpha=1.0):
+    """ACO mutation under standard AS deposit; the studied knob is rho."""
+    def mutate_pher_evap(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        tau = pher["tau"]
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng, alpha=alpha)
+        return new
+    return mutate_pher_evap
+
+
+# ============================================================
+# F64 — Pheromone Deposit by Tour Quality
+# ============================================================
+def make_pheromone_deposit(rho=0.1, Q=1.0, K=20, alpha=1.0):
+    """AS quality-weighted deposit Δτ ∝ Q/(1+f); knob is Q."""
+    def mutate_pher_deposit(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=Q)
+        tau = pher["tau"]
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng, alpha=alpha)
+        return new
+    return mutate_pher_deposit
+
+
+# ============================================================
+# F65 — Heuristic Information η = 1/d
+# ============================================================
+def make_pheromone_heuristic(rho=0.1, alpha=1.0, beta=2.0, K=20):
+    """Sample bins proportional to τ^α · η^β where η = 1/(1+|center−x_best|).
+    Falls back to η ≡ 1 until best_so_far is established."""
+    def mutate_pher_heur(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        tau = pher["tau"]
+        eta = _eta_from_best(ctx, K)
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        eta_row = eta[d] if eta is not None else None
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng,
+                                   alpha=alpha, eta_row=eta_row, beta=beta)
+        return new
+    return mutate_pher_heur
+
+
+# ============================================================
+# F66 — MAX-MIN Pheromone Bounds (MMAS)
+# ============================================================
+def make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0, K=20, alpha=1.0):
+    """MMAS: τ is clipped to [tau_min, tau_max] every generation."""
+    def mutate_pher_mmas(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K, tau_min=tau_min, tau_max=tau_max)
+        pher["tau_min"] = tau_min
+        pher["tau_max"] = tau_max
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0, clip=True)
+        tau = pher["tau"]
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng, alpha=alpha)
+        return new
+    return mutate_pher_mmas
+
+
+# ============================================================
+# F67 — Elitist (EAS) Reinforcement
+# ============================================================
+def make_pheromone_eas(rho=0.1, Q=1.0, e=5.0, K=20, alpha=1.0):
+    """Standard AS deposit + extra deposit of weight e on global best."""
+    def mutate_pher_eas(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "eas", Q=Q, e=e)
+        tau = pher["tau"]
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng, alpha=alpha)
+        return new
+    return mutate_pher_eas
+
+
+# ============================================================
+# F68 — Rank-Based Update (ASrank)
+# ============================================================
+def make_pheromone_asrank(rho=0.1, w=6, Q=1.0, K=20, alpha=1.0):
+    """Top w-1 deposit with linear weights; global best deposits with weight w."""
+    def mutate_pher_asrank(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "asrank", w=w, Q=Q)
+        tau = pher["tau"]
+        d = int(rng.integers(0, ctx["dim"]))
+        new = list(ind)
+        new[d] = _sample_dim_value(tau[d], lb[d], ub[d], K, rng, alpha=alpha)
+        return new
+    return mutate_pher_asrank
+
+
+# ============================================================
+# F69 — Pheromone-Based Edge Recombination (crossover)
+# ============================================================
+def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0):
+    """Per-dim discrete pick: child inherits p1[d] or p2[d] proportional to
+    τ at each parent's bin."""
+    def crossover_pher_edge(p1, p2, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        tau = pher["tau"]
+        a = np.asarray(list(p1), dtype=float)
+        b = np.asarray(list(p2), dtype=float)
+        c1 = a.copy()
+        c2 = b.copy()
+        for d in range(ctx["dim"]):
+            ba = _bin_index_scalar(a[d], lb[d], ub[d], K)
+            bb = _bin_index_scalar(b[d], lb[d], ub[d], K)
+            ta = tau[d, ba] ** alpha
+            tb = tau[d, bb] ** alpha
+            tot = ta + tb
+            pa = 0.5 if (tot <= 0 or not np.isfinite(tot)) else ta / tot
+            if rng.random() < pa:
+                c1[d] = a[d]; c2[d] = b[d]
+            else:
+                c1[d] = b[d]; c2[d] = a[d]
+        return (np.clip(c1, lb, ub).tolist(),
+                np.clip(c2, lb, ub).tolist())
+    return crossover_pher_edge
+
+
+# ============================================================
+# F70 — Pheromone-Weighted Crossover (continuous blend)
+# ============================================================
+def make_pheromone_weighted_crossover(rho=0.1, K=20, alpha=1.0):
+    """Per-dim blend child = w·p1 + (1−w)·p2 with w τ-proportional."""
+    def crossover_pher_weighted(p1, p2, ctx):
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        tau = pher["tau"]
+        a = np.asarray(list(p1), dtype=float)
+        b = np.asarray(list(p2), dtype=float)
+        c1 = np.empty_like(a)
+        c2 = np.empty_like(a)
+        for d in range(ctx["dim"]):
+            ba = _bin_index_scalar(a[d], lb[d], ub[d], K)
+            bb = _bin_index_scalar(b[d], lb[d], ub[d], K)
+            ta = tau[d, ba] ** alpha
+            tb = tau[d, bb] ** alpha
+            tot = ta + tb
+            wt = 0.5 if (tot <= 0 or not np.isfinite(tot)) else ta / tot
+            c1[d] = wt * a[d] + (1.0 - wt) * b[d]
+            c2[d] = (1.0 - wt) * a[d] + wt * b[d]
+        return (np.clip(c1, lb, ub).tolist(),
+                np.clip(c2, lb, ub).tolist())
+    return crossover_pher_weighted
+
+
+# ============================================================
+# F71 — Candidate List (Nearest Neighbor) selection
+# ============================================================
+def make_candidate_list_select(m=5, tournsize=2):
+    """For each parent slot, run a tournament restricted to the m nearest
+    Euclidean neighbors of a random anchor in the population."""
+    def select_candlist(population, k, ctx):
+        rng = ctx["rng"]
+        n = len(population)
+        if n <= m:
+            return tools.selTournament(population, k, tournsize=tournsize)
+        positions = np.array([list(p) for p in population], dtype=float)
+        out = []
+        for _ in range(k):
+            anchor_idx = int(rng.integers(0, n))
+            d = np.linalg.norm(positions - positions[anchor_idx], axis=1)
+            nn_idx = np.argsort(d)[:m]
+            cand = [population[int(i)] for i in nn_idx]
+            winner = tools.selTournament(cand, 1,
+                                         tournsize=min(tournsize, len(cand)))[0]
+            ind = creator.Individual(list(winner))
+            ind.fitness.values = winner.fitness.values
+            out.append(ind)
+        return out
+    return select_candlist
+
+
+# ============================================================
+# F72 — Pheromone-Guided Mutation
+# ============================================================
+def make_pheromone_guided_mutation(rho=0.1, alpha=1.0, beta=2.0, K=20,
+                                   indpb=None):
+    """For each dim, with probability indpb (default 1/dim), resample by
+    drawing a bin proportional to τ^α · η^β then uniform inside it."""
+    def mutate_pher_guided(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        pher = _pheromone_init(ctx, K=K)
+        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        tau = pher["tau"]
+        eta = _eta_from_best(ctx, K)
+        p = (1.0 / max(1, ctx["dim"])) if indpb is None else indpb
+        new = list(ind)
+        for d in range(ctx["dim"]):
+            if rng.random() < p:
+                eta_row = eta[d] if eta is not None else None
+                new[d] = _sample_dim_value(
+                    tau[d], lb[d], ub[d], K, rng,
+                    alpha=alpha, eta_row=eta_row, beta=beta,
+                )
+        return new
+    return mutate_pher_guided

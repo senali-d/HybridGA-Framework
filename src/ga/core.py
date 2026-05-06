@@ -115,6 +115,7 @@ def clip_to_bounds(vec, lb, ub):
 
 def make_individual(vec):
     ind = creator.Individual(vec)
+    ind.age = 0  # A3 aging: lifespan counter, incremented per generation
     return ind
 
 
@@ -220,6 +221,9 @@ def run_sga(
         # HHO escape energy: E = 2*E0*(1 - t/T), E0 ~ U(-1,1)
         ctx["hho_energy"] = 2.0 * (rng.random() * 2.0 - 1.0) * (1.0 - ctx["t_ratio"])
         ctx["_population"] = list(population)
+        # A3 aging: increment lifespan counter on every survivor
+        for _ind in population:
+            _ind.age = getattr(_ind, "age", 0) + 1
 
         # ---- Selection (with selection-pressure tracking) ----
         pre_select_fits = np.array([ind.fitness.values[0] for ind in population])
@@ -312,6 +316,15 @@ def run_sga(
 
         # ---- Replacement ----
         population = replace_fn(population, offspring, ctx)
+        # Evaluate any individuals introduced by replace_fn (e.g. A8 resize)
+        for ind in population:
+            if not ind.fitness.valid and eval_counter[0] < max_fes:
+                f = evaluate_fn(np.asarray(ind))
+                ind.fitness.values = (float(f),)
+                eval_counter[0] += 1
+        population = [ind for ind in population if ind.fitness.valid]
+        if not population:
+            break
 
         # ---- Optional diversity injection ----
         if config.diversity_fn is not None:
@@ -456,6 +469,8 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
             ctx["hho_energy"] = 2.0 * (rng.random() * 2 - 1) * (1.0 - ctx["t_ratio"])
             ctx["_population"] = list(pop)
+            for _ind in pop:
+                _ind.age = getattr(_ind, "age", 0) + 1
 
             parents = select_fn(pop, len(pop), ctx)
             parents = [creator.Individual(list(p)) for p in parents]
@@ -489,6 +504,14 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
                 continue
 
             isl["pop"] = replace_fn(pop, offspring, ctx)
+            for ind in isl["pop"]:
+                if not ind.fitness.valid and eval_counter[0] < max_fes:
+                    f = evaluate_fn(np.asarray(ind))
+                    ind.fitness.values = (float(f),)
+                    eval_counter[0] += 1
+            isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
+            if not isl["pop"]:
+                continue
 
             cur_best = min(isl["pop"], key=lambda x: x.fitness.values[0])
             if cur_best.fitness.values[0] < best.fitness.values[0]:
