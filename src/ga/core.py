@@ -30,6 +30,13 @@ class FeatureConfig:
 
     All functions receive (and may use) a context dict that carries
     generation index, max generations, bounds, rng, etc.
+
+    Mutation rate convention (Mühlenbein / DEAP eaSimple):
+        mut_prob = 1.0 (per-individual gate) is paired with indpb = 1/dim
+        (per-gene rate, set inside `default_mutate`). Expected genes mutated
+        per offspring = 1.0. Tune `indpb` to change mutation intensity; do
+        NOT also tune `mut_prob` — two multiplicative knobs invite
+        accidental under-mutation.
     """
     def __init__(
         self,
@@ -41,7 +48,7 @@ class FeatureConfig:
         replace_fn=None,        # (parents, offspring, ctx) -> new population
         diversity_fn=None,      # (population, ctx) -> population (optional injection)
         cx_prob=0.9,
-        mut_prob=0.1,
+        mut_prob=1.0,
         elitism_k=1,
         n_islands=1,            # F46: number of sub-populations (1 = single panmictic pop)
         migration_interval=10,  # F46: migrate every G generations
