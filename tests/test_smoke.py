@@ -49,6 +49,37 @@ def test_seed_reproducibility():
     assert r1["error"] == r2["error"]
 
 
+def test_every_public_feature_has_a_variant():
+    """Every public callable in ga.features must be wired into at least one
+    variant in build_variants(). Catches feature drift: if you add a new
+    feature function but forget to register it, this test fails."""
+    import inspect
+    from ga import features as feat
+
+    public_fns = {
+        name for name, obj in inspect.getmembers(feat, inspect.isfunction)
+        if obj.__module__ == "ga.features" and not name.startswith("_")
+    }
+
+    referenced: set[str] = set()
+    for v in VARIANTS:
+        for slot in ("init_fn", "select_fn", "crossover_fn",
+                     "mutate_fn", "replace_fn", "diversity_fn"):
+            fn = getattr(v, slot, None)
+            if fn is None:
+                continue
+            qn = getattr(fn, "__qualname__", "")
+            # Closures from `make_*` factories: the factory is the public name
+            referenced.add(qn.split(".")[0] if ".<locals>." in qn
+                           else getattr(fn, "__name__", ""))
+
+    missing = public_fns - referenced
+    assert not missing, (
+        f"{len(missing)} public feature(s) in ga.features have no registered "
+        f"variant in build_variants(): {sorted(missing)}"
+    )
+
+
 def test_islands_with_diversity():
     """Regression check: islands path must apply diversity_fn (was skipped)."""
     from ga.core import FeatureConfig

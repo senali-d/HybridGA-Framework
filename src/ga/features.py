@@ -27,25 +27,6 @@ from ga.core import generational_elitism
 # ============================================================
 # F03 — Opposition-Based Initialization (Tizhoosh 2005)
 # ============================================================
-def init_opposition(n, dim, lb, ub, ctx):
-    """
-    Generate n random points + their opposites; keep the best n by fitness.
-    Note: requires evaluating 2n points, so consumes extra FEs at start.
-    For a fair comparison, run with reduced max_fes or adjust budget.
-
-    For simplicity here we just return 2n candidates and let the main loop
-    evaluate and naturally keep the best (via standard sorting downstream).
-    A purer version would evaluate inside this function.
-    """
-    rng = ctx["rng"]
-    base = [rng.uniform(lb, ub).tolist() for _ in range(n)]
-    opposites = [(lb + ub - np.array(x)).tolist() for x in base]
-    # Return 2n candidates; the eval+replacement will narrow down naturally
-    # (To strictly keep n, you'd need to evaluate here. This is a simplification.)
-    return (base + opposites)[:n]  # Simple: just take first n with opposites mixed in
-
-
-# A stricter version that respects the population size cap:
 def init_opposition_strict(n, dim, lb, ub, ctx):
     """OBL-init: take n random, generate n opposites, return all 2n.
     The evolution loop's first sort+select keeps the best n implicitly

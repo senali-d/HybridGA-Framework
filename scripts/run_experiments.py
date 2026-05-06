@@ -37,6 +37,11 @@ def build_variants():
     ))
 
     variants.append(FeatureConfig(
+        name="SGA+GWO_select",
+        select_fn=feat.select_leader_hierarchy,
+    ))
+
+    variants.append(FeatureConfig(
         name="SGA+chaotic_init",
         init_fn=feat.init_chaotic,
     ))

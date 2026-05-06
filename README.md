@@ -46,6 +46,32 @@ python scripts/run_experiments.py --full --dim 10
 python scripts/run_experiments.py --full --dim 20
 ```
 
+## Smoke tests
+
+Cheap (~2 s) parametrized tests that run **every variant** in
+`build_variants()` for one tiny trial (D=10, pop=12, MaxFES=200) on F1.
+They assert no exceptions, in-bounds solutions, non-negative error, FE
+budget respected, plus seed reproducibility, islands+diversity, and
+*coverage*: every public feature in `ga.features` must be wired into at
+least one variant.
+
+```bash
+pip install pytest                     # one-time
+
+# Run all smoke tests
+pytest tests/ -q
+
+# Run a single feature's smoke test
+pytest tests/test_smoke.py -k "Levy_mut" -q
+
+# Verbose, show every variant pass/fail
+pytest tests/ -v
+```
+
+Run these before kicking off any long protocol run — a 2-second test catches
+operator-shape regressions that would otherwise blow up partway through a
+multi-day full run.
+
 ## How feature injection works
 
 Every variant is a `FeatureConfig` object that overrides one or more of the
