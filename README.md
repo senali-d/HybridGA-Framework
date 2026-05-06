@@ -150,6 +150,29 @@ the same signatures, then registering them in `build_variants()` inside
    post-hoc on the Friedman matrix
 5. **Cliff's delta** effect sizes vs baseline, with magnitude labels
 
+## Merging multiple experiment archives
+
+When variants are run in separate batches (e.g., baseline first, then variants
+later), merge their `runs.parquet` files post-hoc to compute Wilcoxon /
+Friedman / Holm / Nemenyi / Cliff's delta across the combined set:
+
+```bash
+python scripts/merge_and_analyze.py \
+    --archives results/exp_*_baseline_v2 \
+               results/exp_*_pher_batch \
+               results/exp_*_levy_batch \
+    --baseline SGA_baseline \
+    --out results/merged_analysis_full
+```
+
+The output folder contains the same `summary/` files that a single multi-variant
+run would produce. Duplicate `(variant, function, seed)` rows are de-duplicated
+(last occurrence wins), so re-running a variant won't double-count.
+
+**Validity requirements:** all merged archives must use the same `--dim`,
+`--max-fes`, `--pop-size`, and seed set. Wilcoxon is paired by seed index, so
+mismatched configurations break the comparison.
+
 ## Compute notes
 
 - **Demo run** (5 runs, MaxFES=5000, ~75 variants, 12 functions): ~3 minutes
