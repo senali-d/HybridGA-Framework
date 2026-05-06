@@ -249,9 +249,20 @@ def run_sga(
             [p.fitness.values[0] if p.fitness.valid else float("inf")
              for p in parents]
         )
-        pre_var = float(np.var(pre_select_fits))
-        post_var = float(np.var(post_select_fits))
-        selection_pressure = pre_var / post_var if post_var > 1e-30 else float("inf")
+        # Selection intensity (Mühlenbein & Schlierkamp-Voosen 1993):
+        #   I = |mean(selected) - mean(population)| / std(population)
+        # Dimensionless, comparable across functions with different fitness
+        # scales. For tournament k=3 the expected value is ~0.85.
+        # Stored under the legacy column name `selection_pressure` to keep
+        # the parquet schema stable across existing archives.
+        pre_std = float(np.std(pre_select_fits))
+        if pre_std > 1e-30 and np.all(np.isfinite(post_select_fits)):
+            selection_pressure = float(
+                abs(np.mean(post_select_fits) - np.mean(pre_select_fits))
+                / pre_std
+            )
+        else:
+            selection_pressure = 0.0
 
         # ---- Crossover (track child→parent mapping for step-size + cx success) ----
         offspring = []
