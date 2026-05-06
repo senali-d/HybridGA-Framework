@@ -8,6 +8,8 @@ USAGE:
     python scripts/run_experiments.py --no-plots  # skip plot generation
     python scripts/run_experiments.py --tag pilot1
     python scripts/run_experiments.py --variants pher,levy   # subset only
+    python scripts/run_experiments.py --pop-size 40 --max-gen 200 --n-runs 10
+    python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
 """
 
 import argparse
@@ -368,19 +370,46 @@ def main():
                              "seed) tuples. Default 1 (sequential). Uses fork "
                              "start method, so closures inside variants are "
                              "fine. Results are seed-deterministic.")
+    parser.add_argument("--pop-size", type=int, default=None,
+                        help="Population size. Default: 30 (demo) / 50 (full).")
+    parser.add_argument("--max-fes", type=int, default=None,
+                        help="FE budget per run. Default: 5000 (demo); for "
+                             "--full, 200k at D<=10 or 1M at D>10.")
+    parser.add_argument("--max-gen", type=int, default=None,
+                        help="Cap by generations instead of FEs. Sets "
+                             "max_fes = max_gen * pop_size. Overrides --max-fes.")
+    parser.add_argument("--n-runs", type=int, default=None,
+                        help="Independent seeds per (variant, function). "
+                             "Default: 5 (demo) / 30 (full).")
     args = parser.parse_args()
 
+    # Mode defaults; explicit flags override.
     if args.full:
         n_runs = 30
         max_fes = 200_000 if args.dim <= 10 else 1_000_000
         pop_size = 50
-        print(f"Running FULL protocol: D={args.dim}, MaxFES={max_fes}, runs={n_runs}")
+        mode = "FULL"
     else:
         n_runs = 5
         max_fes = 5_000
         pop_size = 30
-        print(f"Running DEMO protocol: D={args.dim}, MaxFES={max_fes}, runs={n_runs}")
-        print("(Use --full for the real CEC 2022 budget.)")
+        mode = "DEMO"
+
+    if args.pop_size is not None:
+        pop_size = args.pop_size
+    if args.max_fes is not None:
+        max_fes = args.max_fes
+    if args.max_gen is not None:
+        max_fes = args.max_gen * pop_size
+    if args.n_runs is not None:
+        n_runs = args.n_runs
+
+    print(f"Running {mode} protocol: D={args.dim}, pop={pop_size}, "
+          f"MaxFES={max_fes} (~{max_fes // pop_size} gens), runs={n_runs}")
+    if mode == "DEMO" and not any([args.pop_size, args.max_fes,
+                                    args.max_gen, args.n_runs]):
+        print("(Use --full for the real CEC 2022 budget, or override with "
+              "--pop-size / --max-fes / --max-gen / --n-runs.)")
 
     variants = build_variants()
     if args.variants:

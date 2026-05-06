@@ -38,13 +38,31 @@ pip install -e .
 # 3. Every new shell, just reactivate:
 #    source venv/bin/activate
 
-# Demo: small budget, ~1 minute, sanity-check the pipeline
+# Demo: small budget, ~20 min on one core, sanity-check the pipeline
 python scripts/run_experiments.py
 
 # Full CEC 2022 protocol: 12 functions, 30 runs, MaxFES per spec
 python scripts/run_experiments.py --full --dim 10
 python scripts/run_experiments.py --full --dim 20
+
+# Custom budget — every protocol parameter is a flag
+python scripts/run_experiments.py --pop-size 40 --max-gen 200 --n-runs 10
+python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
 ```
+
+### Protocol flags
+
+| Flag | Default (demo / full) | Notes |
+|---|---|---|
+| `--dim` | 10 | CEC 2022 supports {2, 10, 20} |
+| `--pop-size` | 30 / 50 | Population size |
+| `--max-fes` | 5000 / 200k (D≤10) or 1M (D>10) | FE budget per run |
+| `--max-gen` | — | Cap by generations instead; sets `max_fes = max_gen × pop_size` |
+| `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
+| `--variants` | (all) | Comma-separated substring filter, e.g. `pher,levy` |
+| `--workers` | 1 | Process-pool size; results are seed-deterministic |
+| `--no-history` / `--no-plots` / `--no-stats` | off | Skip outputs |
+| `--tag` | timestamp | Override archive folder name |
 
 ## Smoke tests
 
