@@ -472,10 +472,16 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             for _ind in pop:
                 _ind.age = getattr(_ind, "age", 0) + 1
 
-            parents = select_fn(pop, len(pop), ctx)
-            parents = [creator.Individual(list(p)) for p in parents]
-            for p, src in zip(parents, select_fn(pop, len(pop), ctx)):
-                p.fitness.values = src.fitness.values
+            raw_parents = select_fn(pop, len(pop), ctx)
+            parents = []
+            for src in raw_parents:
+                new_p = creator.Individual(list(src))
+                try:
+                    if src.fitness.valid:
+                        new_p.fitness.values = src.fitness.values
+                except Exception:
+                    pass
+                parents.append(new_p)
 
             offspring = []
             for i in range(0, len(parents) - 1, 2):
@@ -512,6 +518,17 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
             if not isl["pop"]:
                 continue
+
+            if config.diversity_fn is not None:
+                isl["pop"] = config.diversity_fn(isl["pop"], ctx)
+                for ind in isl["pop"]:
+                    if not ind.fitness.valid and eval_counter[0] < max_fes:
+                        f = evaluate_fn(np.asarray(ind))
+                        ind.fitness.values = (float(f),)
+                        eval_counter[0] += 1
+                isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
+                if not isl["pop"]:
+                    continue
 
             cur_best = min(isl["pop"], key=lambda x: x.fitness.values[0])
             if cur_best.fitness.values[0] < best.fitness.values[0]:

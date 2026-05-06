@@ -158,14 +158,14 @@ def select_leader_hierarchy(population, k, ctx):
         if rng.random() < 0.8:
             r = rng.random()
             if r < 0.5:
-                selected.append(creator.Individual(list(alpha)))
+                src = alpha
             elif r < 0.8:
-                selected.append(creator.Individual(list(beta)))
+                src = beta
             else:
-                selected.append(creator.Individual(list(delta)))
-            selected[-1].fitness.values = (float("inf"),)  # mark as needing re-eval
-            # Actually copy parent's fitness so selection downstream behaves:
-            selected[-1].fitness.values = sorted_pop[0].fitness.values
+                src = delta
+            ind = creator.Individual(list(src))
+            ind.fitness.values = src.fitness.values
+            selected.append(ind)
         else:
             cand = tools.selTournament(population, 1, tournsize=3)[0]
             ind = creator.Individual(list(cand))
@@ -613,10 +613,18 @@ def select_distance_crowding(population, k, ctx):
     rng = ctx["rng"]
     if len(population) <= k:
         return [creator.Individual(list(p)) for p in population[:k]]
+    # Normalize fitness across the population so the fitness term is on the
+    # same scale as the distance term regardless of CEC function magnitude.
+    fits = np.array([p.fitness.values[0] for p in population], dtype=float)
+    f_min, f_max = float(fits.min()), float(fits.max())
+    f_span = (f_max - f_min) if (f_max > f_min) else 1.0
+    rng_norm = float(np.linalg.norm(np.asarray(ctx["ub"]) - np.asarray(ctx["lb"])))
+    fit_pull = 0.1 * rng_norm  # ≤ 10% of max possible distance
     chosen = []
     chosen_arrays = []
     # Seed with one random pick
-    first = population[rng.integers(0, len(population))]
+    first_idx = int(rng.integers(0, len(population)))
+    first = population[first_idx]
     chosen.append(first); chosen_arrays.append(_arr(first))
     pool = [p for p in population if p is not first]
     while len(chosen) < k and pool:
@@ -626,7 +634,8 @@ def select_distance_crowding(population, k, ctx):
         for p in sample:
             arr = _arr(p)
             score = float(np.mean([np.linalg.norm(arr - c) for c in chosen_arrays]))
-            score -= 0.1 * p.fitness.values[0]  # tiny pull toward fitness
+            f_norm = (p.fitness.values[0] - f_min) / f_span  # 0=best, 1=worst
+            score -= fit_pull * f_norm
             if score > best_score:
                 best_score = score; best_p = p
         chosen.append(best_p); chosen_arrays.append(_arr(best_p))
@@ -969,11 +978,10 @@ def mutate_levy_crossover_hybrid(ind, ctx):
 # F35 — Oppositional mutation (mutated child + its opposite, keep better)
 # ============================================================
 def make_oppositional_mutate(base_mutate=None):
-    """Note: keep-the-better requires evaluation. Here we return both as a
-    list-of-vectors; run_sga consumes only the first. To preserve the
-    framework's intent without extra FE accounting, we sample which side
-    randomly per call -> in expectation keeps the better when integrated
-    over runs. A strict version requires a bespoke loop."""
+    """Approximation of OBL-mutate without extra FEs: produce a mutated
+    candidate and its opposite, then return one chosen uniformly at random.
+    A strict version (evaluate both, keep better) would require a bespoke
+    loop and consume an extra FE per call."""
     def mutate_opp(ind, ctx):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
@@ -987,7 +995,6 @@ def make_oppositional_mutate(base_mutate=None):
         else:
             mutated = _arr(base_mutate(ind, ctx))
         opp = lb + ub - mutated
-        # Random pick (averages to keeping the better over many runs)
         choice = mutated if rng.random() < 0.5 else opp
         return np.clip(choice, lb, ub).tolist()
     return mutate_opp
@@ -1113,10 +1120,10 @@ def mutate_rank_step(ind, ctx):
 # F48 — Chaotic perturbation (replace random draws with chaotic series)
 # ============================================================
 def make_chaotic_perturbation(scale=0.05):
-    state = {"x": 0.7}
     def mutate_chaotic(ind, ctx):
         lb, ub = ctx["lb"], ctx["ub"]
         x = _arr(ind)
+        state = ctx.setdefault("_chaotic_perturb_state", {"x": 0.7})
         chaos = []
         c = state["x"]
         for _ in range(ctx["dim"]):
