@@ -1842,3 +1842,88 @@ def make_pheromone_guided_mutation(rho=0.1, alpha=1.0, beta=2.0, K=20,
                 )
         return new
     return mutate_pher_guided
+
+
+# ============================================================
+# F73 — PSO velocity-guided mutation (gbest-only)
+# ============================================================
+def make_pso_velocity_mutate(w=0.7, c1=1.5, c2=1.5, vmax_frac=0.2):
+    """Social-only PSO step as a mutation operator:
+        v ← w·v + (c1+c2)·r·(gbest − x),  x ← x + v
+    Velocity is keyed by the rounded vector so it survives across
+    generations when the same point recurs; otherwise initialized to zero.
+    """
+    def mutate_pso(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        x = _arr(ind)
+        gbest = ctx.get("best_so_far")
+        if gbest is None:
+            return list(ind)
+        g = _arr(gbest)
+        vel_store = ctx.setdefault("_pso_vel", {})
+        key = tuple(np.round(x, 8).tolist())
+        v = vel_store.get(key, np.zeros_like(x))
+        r1 = rng.random(x.shape)
+        r2 = rng.random(x.shape)
+        v = w * v + c1 * r1 * (g - x) + c2 * r2 * (g - x)
+        vmax = vmax_frac * (ub - lb)
+        v = np.clip(v, -vmax, vmax)
+        new_x = x + v
+        new_x = np.clip(new_x, lb, ub)
+        vel_store[tuple(np.round(new_x, 8).tolist())] = v
+        return new_x.tolist()
+    return mutate_pso
+
+
+# ============================================================
+# F74 — ABC fitness-guided mutation (employed / onlooker / mixed)
+# ============================================================
+def make_abc_mutate(phase="employed", n_dims=1):
+    """ABC-style perturbation:  v_d = x_d + φ · (x_d − x_{k,d})
+    on `n_dims` randomly chosen dimensions.
+        - employed: neighbor k drawn uniformly at random.
+        - onlooker: k drawn with probability proportional to fitness rank
+                    (better individuals more likely).
+        - mixed:    50/50 alternation per call (canonical ABC pattern).
+    """
+    if phase not in ("employed", "onlooker", "mixed"):
+        raise ValueError(f"phase must be employed/onlooker/mixed, got {phase}")
+
+    def mutate_abc(ind, ctx):
+        rng = ctx["rng"]
+        pop = ctx.get("_population", [])
+        if len(pop) < 2:
+            return list(ind)
+        x = _arr(ind)
+        dim = ctx["dim"]
+
+        mode = phase
+        if mode == "mixed":
+            mode = "employed" if rng.random() < 0.5 else "onlooker"
+
+        if mode == "employed":
+            k = int(rng.integers(0, len(pop)))
+        else:
+            fits = np.array(
+                [p.fitness.values[0] if p.fitness.valid else np.inf for p in pop],
+                dtype=float,
+            )
+            order = np.argsort(fits)        # best first (minimization)
+            ranks = np.empty_like(order)
+            ranks[order] = np.arange(len(pop))
+            weights = (len(pop) - ranks).astype(float)
+            s = weights.sum()
+            if s <= 0 or not np.isfinite(s):
+                k = int(rng.integers(0, len(pop)))
+            else:
+                k = int(rng.choice(len(pop), p=weights / s))
+
+        xk = _arr(pop[k])
+        n = max(1, min(n_dims, dim))
+        dims = rng.choice(dim, size=n, replace=False)
+        phi = rng.uniform(-1.0, 1.0, size=n)
+        new = x.copy()
+        new[dims] = x[dims] + phi * (x[dims] - xk[dims])
+        return np.clip(new, ctx["lb"], ctx["ub"]).tolist()
+    return mutate_abc

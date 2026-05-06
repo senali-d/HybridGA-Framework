@@ -344,6 +344,26 @@ def build_variants():
         mutate_fn=feat.make_danger_signal(stag_threshold=10, boost=5.0),
     ))
 
+    variants.append(FeatureConfig(
+        name="SGA+pso_velocity_mut",
+        mutate_fn=feat.make_pso_velocity_mutate(w=0.7, c1=1.5, c2=1.5),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+abc_employed_mut",
+        mutate_fn=feat.make_abc_mutate(phase="employed"),
+    ))
+
+    variants.append(FeatureConfig(
+        name="SGA+abc_onlooker_mut",
+        mutate_fn=feat.make_abc_mutate(phase="onlooker"),
+    ))
+    
+    variants.append(FeatureConfig(
+        name="SGA+abc_mixed_mut",
+        mutate_fn=feat.make_abc_mutate(phase="mixed"),
+    ))
+
     return variants
 
 
