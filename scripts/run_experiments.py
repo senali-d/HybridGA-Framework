@@ -7,6 +7,7 @@ USAGE:
     python scripts/run_experiments.py --full      # full CEC 2022 protocol
     python scripts/run_experiments.py --no-plots  # skip plot generation
     python scripts/run_experiments.py --tag pilot1
+    python scripts/run_experiments.py --variants pher,levy   # subset only
 """
 
 import argparse
@@ -353,6 +354,10 @@ def main():
     parser.add_argument("--no-history", action="store_true",
                         help="Skip per-generation history recording (saves disk).")
     parser.add_argument("--baseline", type=str, default="SGA_baseline")
+    parser.add_argument("--variants", type=str, default=None,
+                        help="Comma-separated substrings; only variants whose "
+                             "name contains any of these are run. Baseline is "
+                             "always included. Example: --variants pher,levy")
     args = parser.parse_args()
 
     if args.full:
@@ -368,7 +373,16 @@ def main():
         print("(Use --full for the real CEC 2022 budget.)")
 
     variants = build_variants()
-    print(f"Variants to test: {[v.name for v in variants]}\n")
+    if args.variants:
+        needles = [s.strip() for s in args.variants.split(",") if s.strip()]
+        variants = [
+            v for v in variants
+            if v.name == args.baseline or any(n in v.name for n in needles)
+        ]
+        if not any(v.name == args.baseline for v in variants):
+            print(f"WARNING: baseline {args.baseline!r} not in filtered set; "
+                  "Wilcoxon vs baseline will be skipped.")
+    print(f"Variants to test ({len(variants)}): {[v.name for v in variants]}\n")
 
     recorder = ExperimentRecorder(
         out_root=args.out_root,

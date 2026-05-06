@@ -21,6 +21,8 @@ from deap import tools, creator
 from scipy.special import gamma
 from scipy.stats import qmc
 
+from ga.core import generational_elitism
+
 
 # ============================================================
 # F03 — Opposition-Based Initialization (Tizhoosh 2005)
@@ -306,12 +308,7 @@ def make_archive_replace(fraction=0.1):
     """At replacement time, splice a fraction of the archive's
     historical bests into the worst slots of the new population."""
     def replace_archive(parents, offspring, ctx):
-        # First do default generational replacement with elitism
-        k = ctx["elitism_k"]
-        parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
-        elites = parents_sorted[:k]
-        offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
-        new_pop = elites + offspring_sorted[: len(parents) - k]
+        new_pop = generational_elitism(parents, offspring, ctx["elitism_k"])
 
         archive = ctx.get("archive", None)
         if archive and len(archive) > 0:
@@ -1364,12 +1361,7 @@ def make_adaptive_resize(min_n=20, max_n=100, target_div_frac=0.05):
     """If Hussain diversity < target -> grow (add random); if > 2*target -> shrink (drop worst).
     Pop size is clamped to [min_n, max_n]."""
     def replace_adaptive(parents, offspring, ctx):
-        # default replacement first
-        k = ctx["elitism_k"]
-        parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
-        elites = parents_sorted[:k]
-        offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
-        new_pop = elites + offspring_sorted[: len(parents) - k]
+        new_pop = generational_elitism(parents, offspring, ctx["elitism_k"])
         # diversity measure
         positions = np.array([list(p) for p in new_pop], dtype=float)
         if positions.size == 0:
@@ -1711,8 +1703,6 @@ def make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0, K=20, alpha=1.0):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K, tau_min=tau_min, tau_max=tau_max)
-        pher["tau_min"] = tau_min
-        pher["tau_max"] = tau_max
         _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0, clip=True)
         tau = pher["tau"]
         d = int(rng.integers(0, ctx["dim"]))

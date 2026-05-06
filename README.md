@@ -102,9 +102,9 @@ the same signatures, then registering them in `build_variants()` inside
 2. **Wilcoxon signed-rank test** of each variant vs baseline (per function),
    reported as wins / ties / losses at α = 0.05
 3. **Friedman test** across the full suite with mean ranks per variant
-
-For your thesis, also add Holm post-hoc and Cliff's delta effect sizes
-(both are one-liners with `scipy.stats` and `cliffs_delta` packages).
+4. **Holm post-hoc** pairwise Wilcoxon (FWER-controlled) and **Nemenyi**
+   post-hoc on the Friedman matrix
+5. **Cliff's delta** effect sizes vs baseline, with magnitude labels
 
 ## Compute notes
 

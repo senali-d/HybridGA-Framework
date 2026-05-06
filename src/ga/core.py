@@ -94,17 +94,18 @@ def default_mutate(ind, ctx):
     return mutated
 
 
-def default_replace(parents, offspring, ctx):
-    """
-    Generational replacement with k-elitism.
-    Keep best k from parents, fill rest from offspring.
-    """
-    k = ctx["elitism_k"]
+def generational_elitism(parents, offspring, k):
+    """Generational replacement with k-elitism: keep best k parents,
+    fill the rest with the best offspring. Reusable from feature variants."""
     parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
     elites = parents_sorted[:k]
     offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
-    new_pop = elites + offspring_sorted[: len(parents) - k]
-    return new_pop
+    return elites + offspring_sorted[: len(parents) - k]
+
+
+def default_replace(parents, offspring, ctx):
+    """Generational replacement with k-elitism (default operator)."""
+    return generational_elitism(parents, offspring, ctx["elitism_k"])
 
 
 # ===================== EVOLUTION LOOP =====================
