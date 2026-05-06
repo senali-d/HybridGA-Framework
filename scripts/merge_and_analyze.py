@@ -18,6 +18,7 @@ Notes:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -26,6 +27,63 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from analysis.stats import summarize, write_summary
+
+
+_CONFIG_KEYS_MUST_MATCH = ("dim", "max_fes", "pop_size", "n_runs", "full")
+
+
+def validate_archive_configs(archives: list[Path], strict: bool = True) -> None:
+    """Refuse to merge archives whose protocol parameters disagree.
+
+    Wilcoxon is paired by seed index; mismatched dim / FE budget / pop size
+    / n_runs invalidate the comparison. Mutation parameters (mut_prob,
+    indpb) are FeatureConfig defaults, not CLI args, so they aren't in
+    config.json — we surface git_sha mismatches as a soft warning since
+    a code-level convention change (e.g., mut_prob 0.1 -> 1.0) won't
+    show up otherwise.
+    """
+    configs = {}
+    for arc in archives:
+        cfg_path = arc / "config.json"
+        if not cfg_path.exists():
+            print(f"[warn] {arc.name}: no config.json — skipping validation")
+            continue
+        with open(cfg_path) as f:
+            configs[arc.name] = json.load(f)
+    if len(configs) < 2:
+        return
+
+    ref_name, ref_cfg = next(iter(configs.items()))
+    ref_args = ref_cfg.get("args", {})
+    mismatches: list[str] = []
+    for name, cfg in configs.items():
+        if name == ref_name:
+            continue
+        args = cfg.get("args", {})
+        for key in _CONFIG_KEYS_MUST_MATCH:
+            if args.get(key) != ref_args.get(key):
+                mismatches.append(
+                    f"  {name}.{key}={args.get(key)!r} vs "
+                    f"{ref_name}.{key}={ref_args.get(key)!r}"
+                )
+    if mismatches:
+        msg = (
+            "Archive protocol parameters disagree:\n"
+            + "\n".join(mismatches)
+            + "\nWilcoxon pairing by seed requires identical protocol. "
+            "Pass --no-validate to override."
+        )
+        if strict:
+            raise SystemExit(msg)
+        print(f"WARNING: {msg}")
+
+    shas = {name: cfg.get("git_sha") for name, cfg in configs.items()}
+    unique_shas = {s for s in shas.values() if s}
+    if len(unique_shas) > 1:
+        print("WARNING: archives produced from different git commits — "
+              "code-level changes (e.g., mutation defaults) may differ:")
+        for name, sha in shas.items():
+            print(f"  {name}: {sha}")
 
 
 def load_merged_runs(archives: list[Path]) -> pd.DataFrame:
@@ -82,9 +140,12 @@ def main():
                         help="Variant name used as Wilcoxon reference.")
     parser.add_argument("--out", required=True,
                         help="Output directory for merged summary.")
+    parser.add_argument("--no-validate", action="store_true",
+                        help="Downgrade protocol-mismatch errors to warnings.")
     args = parser.parse_args()
 
     archives = [Path(a) for a in args.archives]
+    validate_archive_configs(archives, strict=not args.no_validate)
     runs_df = load_merged_runs(archives)
     hist_df = load_merged_history(archives)
 

@@ -1144,10 +1144,13 @@ def _norm_fitness_rank(pop, ind):
         my_fit = ind.fitness.values[0]
     except Exception:
         return 0.5
+    rank = 1.0
     for i, p in enumerate(sorted_pop):
         if p.fitness.values[0] >= my_fit:
-            return i / max(1, n - 1)
-    return 1.0
+            rank = i / max(1, n - 1)
+            break
+    assert 0.0 <= rank <= 1.0, f"_norm_fitness_rank produced {rank}"
+    return rank
 
 
 # ============================================================
@@ -1277,16 +1280,16 @@ def make_negative_selection(threshold=0.05, push=0.1):
 # F56 — Affinity-Based Gaussian Mutation (opt-aiNet)
 # ============================================================
 def make_affinity_gaussian(sigma_max=0.2, rho=2.0):
-    """sigma_i = sigma_max * exp(-rho * normalized_fitness_in_[0,1])
-    Where 0 = best (so best gets smallest step). Rank-based proxy."""
+    """opt-aiNet affinity: best individuals mutate the LEAST.
+    sigma = sigma_max * exp(-rho * (1 - r)), where r is rank-normalized
+    in [0,1] with 0 = best. So r=0 -> sigma_max*exp(-rho) (smallest step),
+    r=1 -> sigma_max (largest step). Matches F51 CLONALG convention."""
     def mutate_affinity(ind, ctx):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         pop = ctx.get("_population", [])
         r = _norm_fitness_rank(pop, ind) if pop else 0.5
-        # Better fitness (smaller r) -> larger sigma (CLONALG-style affinity).
-        # opt-aiNet says "step ~ exp(-rho*f_norm)"; we use (1-r) as f_norm.
-        sigma = sigma_max * np.exp(-rho * r)
+        sigma = sigma_max * np.exp(-rho * (1.0 - r))
         x = _arr(ind)
         step = rng.normal(0, 1, ctx["dim"]) * sigma * (ub - lb)
         return np.clip(x + step, lb, ub).tolist()
@@ -1354,14 +1357,12 @@ def make_adaptive_resize(min_n=20, max_n=100, target_div_frac=0.05):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         if div < target and len(new_pop) < max_n:
-            # grow by 10%
-            n_add = max(1, len(new_pop) // 10)
+            n_add = min(max(1, len(new_pop) // 10), max_n - len(new_pop))
             for _ in range(n_add):
                 v = rng.uniform(lb, ub).tolist()
                 new_pop.append(creator.Individual(v))
         elif div > 2 * target and len(new_pop) > min_n:
-            # shrink by 10% (drop worst)
-            n_drop = max(1, len(new_pop) // 10)
+            n_drop = min(max(1, len(new_pop) // 10), len(new_pop) - min_n)
             new_pop = sorted(new_pop, key=lambda x: x.fitness.values[0])[: len(new_pop) - n_drop]
         return new_pop
     return replace_adaptive

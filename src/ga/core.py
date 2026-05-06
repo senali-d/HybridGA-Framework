@@ -495,11 +495,8 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             parents = []
             for src in raw_parents:
                 new_p = creator.Individual(list(src))
-                try:
-                    if src.fitness.valid:
-                        new_p.fitness.values = src.fitness.values
-                except Exception:
-                    pass
+                if src.fitness.valid:
+                    new_p.fitness.values = src.fitness.values
                 parents.append(new_p)
 
             offspring = []
