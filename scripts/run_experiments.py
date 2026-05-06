@@ -385,6 +385,12 @@ def main():
                         help="Comma-separated substrings; only variants whose "
                              "name contains any of these are run. Baseline is "
                              "always included. Example: --variants pher,levy")
+    parser.add_argument("--exact", action="store_true",
+                        help="Treat --variants entries as exact names "
+                             "(matching either v.name or 'SGA+'+entry) "
+                             "instead of substrings. Useful when one needle "
+                             "would otherwise match a longer variant name "
+                             "(e.g. DE_mut vs SHADE_mut).")
     parser.add_argument("--workers", type=int, default=1,
                         help="Process-pool workers over (variant, function, "
                              "seed) tuples. Default 1 (sequential). Uses fork "
@@ -437,10 +443,17 @@ def main():
     variants = build_variants()
     if args.variants:
         needles = [s.strip() for s in args.variants.split(",") if s.strip()]
-        variants = [
-            v for v in variants
-            if v.name == args.baseline or any(n in v.name for n in needles)
-        ]
+        if args.exact:
+            wanted = set(needles) | {f"SGA+{n}" for n in needles}
+            variants = [
+                v for v in variants
+                if v.name == args.baseline or v.name in wanted
+            ]
+        else:
+            variants = [
+                v for v in variants
+                if v.name == args.baseline or any(n in v.name for n in needles)
+            ]
         if not any(v.name == args.baseline for v in variants):
             print(f"WARNING: baseline {args.baseline!r} not in filtered set; "
                   "Wilcoxon vs baseline will be skipped.")
