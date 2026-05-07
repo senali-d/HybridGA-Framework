@@ -53,6 +53,8 @@ class FeatureConfig:
         n_islands=1,            # F46: number of sub-populations (1 = single panmictic pop)
         migration_interval=10,  # F46: migrate every G generations
         archive_size=5,         # F37/F31/F09: capacity of historical-best archive
+        bound_handling="clip",  # how the core treats out-of-bounds offspring:
+                                # "clip" | "reflect" | "reinit"
     ):
         self.name = name
         self.init_fn = init_fn
@@ -67,6 +69,12 @@ class FeatureConfig:
         self.n_islands = n_islands
         self.migration_interval = migration_interval
         self.archive_size = archive_size
+        if bound_handling not in ("clip", "reflect", "reinit"):
+            raise ValueError(
+                f"bound_handling must be 'clip', 'reflect', or 'reinit'; "
+                f"got {bound_handling!r}"
+            )
+        self.bound_handling = bound_handling
 
 
 # ===================== DEFAULT (BASELINE) OPERATORS =====================
@@ -118,7 +126,39 @@ def default_replace(parents, offspring, ctx):
 # ===================== EVOLUTION LOOP =====================
 
 def clip_to_bounds(vec, lb, ub):
+    """Hard clip — kept for backward compatibility and operator-internal use."""
     return np.clip(vec, lb, ub).tolist()
+
+
+def apply_bounds(vec, lb, ub, mode="clip", rng=None):
+    """Bound handler used by the core loop on init/crossover/mutation outputs.
+
+    "clip"    — np.clip onto [lb, ub] (default; matches historical behavior).
+    "reflect" — fold out-of-bounds back into [lb, ub] (commonly used in
+                CEC-suite literature; reduces boundary-mass bias).
+    "reinit"  — replace out-of-bounds genes with uniform samples in [lb, ub].
+    """
+    arr = np.asarray(vec, dtype=float)
+    if mode == "clip":
+        return np.clip(arr, lb, ub).tolist()
+    if mode == "reflect":
+        # Fold repeatedly in case |out-of-bound| > range; cheap closed form.
+        span = ub - lb
+        # Map to a 2*span-periodic triangular wave centered on [lb, ub].
+        t = np.mod(arr - lb, 2.0 * span)
+        folded = np.where(t > span, 2.0 * span - t, t)
+        out = lb + folded
+        # Numerical safety in case of degenerate spans.
+        return np.clip(out, lb, ub).tolist()
+    if mode == "reinit":
+        oob = (arr < lb) | (arr > ub)
+        if not np.any(oob):
+            return arr.tolist()
+        rng = rng if rng is not None else np.random.default_rng()
+        fresh = rng.uniform(lb, ub)
+        out = np.where(oob, fresh, arr)
+        return out.tolist()
+    raise ValueError(f"unknown bound_handling mode: {mode!r}")
 
 
 def make_individual(vec):
@@ -175,9 +215,15 @@ def run_sga(
     lb = np.asarray(problem.lb, dtype=float)
     ub = np.asarray(problem.ub, dtype=float)
 
-    # Default MaxFES per CEC 2022 rules
+    # Default MaxFES per CEC 2022 rules (only D=10 and D=20 are specified).
     if max_fes is None:
-        max_fes = 200_000 if dim <= 10 else 1_000_000
+        _CEC2022_MAXFES = {10: 200_000, 20: 1_000_000}
+        if dim not in _CEC2022_MAXFES:
+            raise ValueError(
+                f"CEC2022 MaxFES is defined only for dim 10 and 20; "
+                f"got dim={dim}. Pass max_fes explicitly to override."
+            )
+        max_fes = _CEC2022_MAXFES[dim]
 
     # Build the context dict every operator can read
     ctx = {
@@ -198,6 +244,7 @@ def run_sga(
         "t_ratio": 0.0,                                 # gen / max_gen_estimate (F40/41/44)
         "hho_energy": 1.0,                              # |E| escape energy (F20/F43)
         "config": config,                               # so operators can read e.g. mut_prob
+        "bound_handling": getattr(config, "bound_handling", "clip"),
     }
 
     # Pick operators (use defaults if not overridden)
@@ -212,7 +259,7 @@ def run_sga(
 
     # ---- Initialization ----
     init_vectors = init_fn(pop_size, dim, lb, ub, ctx)
-    population = [make_individual(clip_to_bounds(v, lb, ub)) for v in init_vectors]
+    population = [make_individual(apply_bounds(v, lb, ub, mode=ctx["bound_handling"], rng=rng)) for v in init_vectors]
     evaluate_population(population, evaluate_fn, eval_counter)
 
     history = []
@@ -276,8 +323,8 @@ def run_sga(
             else:
                 c1, c2 = list(p1), list(p2)
                 cx_was_applied.extend([False, False])
-            offspring.append(make_individual(clip_to_bounds(c1, lb, ub)))
-            offspring.append(make_individual(clip_to_bounds(c2, lb, ub)))
+            offspring.append(make_individual(apply_bounds(c1, lb, ub, mode=ctx["bound_handling"], rng=rng)))
+            offspring.append(make_individual(apply_bounds(c2, lb, ub, mode=ctx["bound_handling"], rng=rng)))
             cx_parent_idx.extend([i, i + 1])
 
         # ---- Mutation (track which were mutated and pre-mutation vector) ----
@@ -286,7 +333,7 @@ def run_sga(
         for i, ind in enumerate(offspring):
             if rng.random() < config.mut_prob:
                 m = mutate_fn(ind, ctx)
-                offspring[i] = make_individual(clip_to_bounds(m, lb, ub))
+                offspring[i] = make_individual(apply_bounds(m, lb, ub, mode=ctx["bound_handling"], rng=rng))
                 mut_was_applied[i] = True
 
         # ---- Evaluate offspring (respect FE budget) ----
@@ -429,7 +476,13 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
     lb = np.asarray(problem.lb, dtype=float)
     ub = np.asarray(problem.ub, dtype=float)
     if max_fes is None:
-        max_fes = 200_000 if dim <= 10 else 1_000_000
+        _CEC2022_MAXFES = {10: 200_000, 20: 1_000_000}
+        if dim not in _CEC2022_MAXFES:
+            raise ValueError(
+                f"CEC2022 MaxFES is defined only for dim 10 and 20; "
+                f"got dim={dim}. Pass max_fes explicitly to override."
+            )
+        max_fes = _CEC2022_MAXFES[dim]
 
     K = max(1, config.n_islands)
     island_pop_sizes = [pop_size // K] * K
@@ -465,10 +518,11 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             "t_ratio": 0.0,
             "hho_energy": 1.0,
             "config": config,
+            "bound_handling": getattr(config, "bound_handling", "clip"),
             "island_id": k,
         }
         init_vectors = init_fn(island_pop_sizes[k], dim, lb, ub, ctx)
-        pop = [make_individual(clip_to_bounds(v, lb, ub)) for v in init_vectors]
+        pop = [make_individual(apply_bounds(v, lb, ub, mode=ctx["bound_handling"], rng=rng)) for v in init_vectors]
         evaluate_population(pop, evaluate_fn, eval_counter)
         islands.append({"pop": pop, "ctx": ctx})
 
@@ -506,13 +560,13 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
                     c1, c2 = crossover_fn(p1, p2, ctx)
                 else:
                     c1, c2 = list(p1), list(p2)
-                offspring.append(make_individual(clip_to_bounds(c1, lb, ub)))
-                offspring.append(make_individual(clip_to_bounds(c2, lb, ub)))
+                offspring.append(make_individual(apply_bounds(c1, lb, ub, mode=ctx["bound_handling"], rng=rng)))
+                offspring.append(make_individual(apply_bounds(c2, lb, ub, mode=ctx["bound_handling"], rng=rng)))
 
             for i, ind in enumerate(offspring):
                 if rng.random() < config.mut_prob:
                     m = mutate_fn(ind, ctx)
-                    offspring[i] = make_individual(clip_to_bounds(m, lb, ub))
+                    offspring[i] = make_individual(apply_bounds(m, lb, ub, mode=ctx["bound_handling"], rng=rng))
 
             for ind in offspring:
                 if eval_counter[0] >= max_fes:

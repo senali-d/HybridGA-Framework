@@ -1,14 +1,15 @@
 """
 CEC 2022 suite wrappers and the multi-variant run protocol.
 
-Optional process-pool parallelism over (variant, function, seed) tuples.
-Workers use the `fork` start method so closures inside variants (returned by
-`make_*` factories) don't need to be picklable — they're inherited via
-copy-on-write memory. Spawn-based parallelism would require all features
-to be top-level callables.
+Optional process-pool parallelism over (variant, function, seed) tuples
+using the `spawn` start method (safe on macOS, where `fork` is unsafe with
+NumPy/Accelerate). Variants contain closures from `make_*` factories which
+the standard pickler cannot serialize; we use `cloudpickle` to encode them
+in the parent and decode inside each worker.
 """
 
 import time
+import cloudpickle
 import numpy as np
 
 from opfunu.cec_based.cec2022 import (
@@ -26,30 +27,41 @@ CEC2022_FUNCS = [
 ]
 _FUNCS_BY_NAME = dict(CEC2022_FUNCS)
 
+# Statically encoded from opfunu's CEC2022 sources: F1-F5 ship shift/rotation
+# data for D ∈ {2, 10, 20}; the hybrid (F6-F8) and composition (F9-F12) suites
+# only ship D ∈ {10, 20}. We mirror the values here because some F6+ classes
+# fail in __init__ (loading missing data files) before `dim_supported` is set,
+# which makes runtime probing unreliable.
+_DIM_SUPPORTED = {
+    "F1": (2, 10, 20), "F2": (2, 10, 20), "F3": (2, 10, 20),
+    "F4": (2, 10, 20), "F5": (2, 10, 20),
+    "F6": (10, 20), "F7": (10, 20), "F8": (10, 20),
+    "F9": (10, 20), "F10": (10, 20), "F11": (10, 20), "F12": (10, 20),
+}
 
-# Module-level state populated in the parent before forking workers; children
-# inherit it without pickling. Keep this top-level so children see the same
-# binding after a fork-based ProcessPoolExecutor spawns them.
-_WORKER_VARIANTS: dict = {}
-_WORKER_KW: dict = {}
 
+def _worker_run_one(payload):
+    """Worker entry point. `payload` is fully picklable (bytes + primitives).
 
-def _worker_run_one(args):
-    """Worker entry point. `args` is small and fully picklable."""
-    vname, func_name, seed = args
-    variant = _WORKER_VARIANTS[vname]
+    Variants are cloudpickled in the parent because their `make_*` closures
+    aren't picklable by the default pickler. We deserialize once per worker
+    job; for spawn-based pools each future is a fresh job, so there is no
+    cross-job caching of decoded variants.
+    """
+    variant_blob, func_name, seed, kw = payload
+    variant = cloudpickle.loads(variant_blob)
     FCls = _FUNCS_BY_NAME[func_name]
-    problem = FCls(ndim=_WORKER_KW["dim"])
+    problem = FCls(ndim=kw["dim"])
     t_run = time.time()
     r = run_sga(
         problem=problem,
         config=variant,
-        pop_size=_WORKER_KW["pop_size"],
-        max_fes=_WORKER_KW["max_fes"],
+        pop_size=kw["pop_size"],
+        max_fes=kw["max_fes"],
         seed=seed,
-        record_history=_WORKER_KW["record_history"],
+        record_history=kw["record_history"],
     )
-    return vname, func_name, seed, r, time.time() - t_run
+    return variant.name, func_name, seed, r, time.time() - t_run
 
 
 def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
@@ -79,6 +91,18 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
             )
         funcs = [(fn, _FUNCS_BY_NAME[fn]) for fn in wanted]
 
+    # Validate dim against each function's supported dims up front so workers
+    # don't fail mid-dispatch.
+    unsupported = [
+        (fn, _DIM_SUPPORTED[fn]) for fn, _ in funcs
+        if dim not in _DIM_SUPPORTED[fn]
+    ]
+    if unsupported:
+        raise ValueError(
+            f"dim={dim} is not supported by: "
+            + ", ".join(f"{fn} (supports {sup})" for fn, sup in unsupported)
+        )
+
     total_jobs = len(variants) * len(funcs) * n_runs
     t0 = time.time()
 
@@ -92,33 +116,33 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        # Populate inherited state for forked workers.
-        global _WORKER_VARIANTS, _WORKER_KW
-        _WORKER_VARIANTS = {v.name: v for v in variants}
-        _WORKER_KW = {
-            "dim": dim, "pop_size": pop_size, "max_fes": max_fes,
-            "record_history": record_history,
-        }
-
         try:
-            ctx = mp.get_context("fork")
+            mp_ctx = mp.get_context("spawn")
         except ValueError:
-            print("WARNING: fork start method unavailable; falling back to "
+            print("WARNING: spawn start method unavailable; falling back to "
                   "sequential execution.")
             workers = 1
 
     if workers > 1:
-        all_args = [
-            (v.name, fn, seed)
+        # Cloudpickle each variant once; pass the blob to workers. This
+        # bypasses the default pickler's inability to serialize the closures
+        # returned by make_* factories.
+        variant_blobs = {v.name: cloudpickle.dumps(v) for v in variants}
+        kw = {
+            "dim": dim, "pop_size": pop_size, "max_fes": max_fes,
+            "record_history": record_history,
+        }
+        all_payloads = [
+            (variant_blobs[v.name], fn, seed, kw)
             for fn, _ in funcs
             for v in variants
             for seed in range(n_runs)
         ]
-        print(f"  Dispatching {len(all_args)} jobs across {workers} workers "
-              f"(fork)...")
+        print(f"  Dispatching {len(all_payloads)} jobs across {workers} "
+              f"workers (spawn)...")
         done = 0
-        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as ex:
-            futures = [ex.submit(_worker_run_one, a) for a in all_args]
+        with ProcessPoolExecutor(max_workers=workers, mp_context=mp_ctx) as ex:
+            futures = [ex.submit(_worker_run_one, p) for p in all_payloads]
             for fut in as_completed(futures):
                 vname, fn, seed, r, runtime_s = fut.result()
                 err_by_seed[vname][fn][seed] = r["error"]

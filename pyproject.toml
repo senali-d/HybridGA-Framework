@@ -18,6 +18,7 @@ dependencies = [
     "seaborn",
     "scikit-posthocs",
     "statsmodels",
+    "cloudpickle",
     "setuptools<81",
 ]
 
