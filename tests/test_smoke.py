@@ -152,11 +152,15 @@ def test_engineering_problems_construct_and_evaluate(name):
         )
 
 
-def test_engineering_smoke_run():
-    """One short SGA run on TensionCompressionSpring completes and returns
+@pytest.mark.parametrize("name", [
+    "TensionCompressionSpring", "PressureVessel", "WeldedBeam", "SpeedReducer",
+])
+def test_engineering_smoke_run(name):
+    """One short SGA run on each engineering problem completes and returns
     a valid result dict."""
-    from benchmarks.engineering import TensionCompressionSpring
-    problem = TensionCompressionSpring()
+    from benchmarks.engineering import ENGINEERING_FUNCS
+    Cls = dict(ENGINEERING_FUNCS)[name]
+    problem = Cls()
     variant = next(v for v in VARIANTS if v.name == "SGA_baseline")
     r = run_sga(problem, variant, pop_size=POP, max_fes=MAX_FES, seed=0)
 
@@ -166,6 +170,44 @@ def test_engineering_smoke_run():
     assert np.all(sol >= problem.lb - 1e-9)
     assert np.all(sol <= problem.ub + 1e-9)
     assert np.isfinite(r["best_fitness"])
+
+
+def test_spring_g2_singularity_is_finite():
+    """At D == d the literature form of g2 is singular; evaluate() must
+    still return a finite scalar (guard inside constraints)."""
+    from benchmarks.engineering import TensionCompressionSpring
+    problem = TensionCompressionSpring()
+    # D == d, both inside their respective bounds (d in [0.05, 2.0],
+    # D in [0.25, 1.30]); pick the overlap.
+    x = np.array([0.5, 0.5, 5.0])
+    f = problem.evaluate(x)
+    assert np.isfinite(f)
+    # Singular point is treated as strongly infeasible.
+    assert f >= TensionCompressionSpring.F_OFFSET
+
+
+def test_engineering_feasible_point_below_offset():
+    """For each engineering problem, locate a feasible point via rejection
+    sampling and verify its fitness lies strictly below F_OFFSET — the
+    other half of the Deb encoding contract."""
+    from benchmarks.engineering import ENGINEERING_FUNCS
+    rng = np.random.default_rng(0)
+    for name, Cls in ENGINEERING_FUNCS:
+        problem = Cls()
+        for _ in range(20000):
+            x = problem.lb + rng.random(problem.ndim) * (problem.ub - problem.lb)
+            x_c = problem._canonicalize(x)
+            g = problem.constraints(x_c)
+            if np.all(g <= 0.0):
+                f = problem.evaluate(x)
+                assert np.isfinite(f)
+                assert f < Cls.F_OFFSET, (
+                    f"{name}: feasible point should yield fitness < "
+                    f"F_OFFSET ({Cls.F_OFFSET}); got {f}"
+                )
+                break
+        else:
+            pytest.fail(f"{name}: no feasible point found in 20000 samples")
 
 
 def test_islands_with_diversity():

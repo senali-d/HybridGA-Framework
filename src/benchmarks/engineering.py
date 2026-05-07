@@ -100,7 +100,9 @@ class TensionCompressionSpring(EngineeringProblem):
             # The literature form of g2 is singular when D == d.
             # Treat singular / near-singular points as strongly infeasible
             # with a large but finite violation so evaluate() stays finite.
-            g2 = 1.0e12
+            # Magnitude is well above any non-singular feasible/infeasible g2
+            # but small enough not to dominate Σ violations elsewhere.
+            g2 = 1.0e6
         else:
             g2 = (4.0 * D * D - d * D) / denom + 1.0 / (5108.0 * d * d) - 1.0
 
@@ -122,7 +124,9 @@ class TensionCompressionSpring(EngineeringProblem):
 class PressureVessel(EngineeringProblem):
     NDIM = 4
     LB = [0.0625, 0.0625, 10.0, 10.0]
-    UB = [99.0,   99.0,   200.0, 200.0]
+    # Ts, Th canonical Kannan & Kramer range: 1..99 multiples of 0.0625"
+    # (i.e., 0.0625..6.1875). R, L per the standard literature box.
+    UB = [6.1875, 6.1875, 200.0, 200.0]
     F_GLOBAL = 6059.714335048436
     # Deb-style scalar encoding requires all feasible objectives to remain
     # strictly below F_OFFSET. Use a conservative bound from the box upper
