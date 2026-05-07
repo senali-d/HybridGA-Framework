@@ -41,6 +41,24 @@ def test_variant_runs_clean(variant):
     assert np.all(sol <= np.asarray(problem.ub) + 1e-9)
 
 
+@pytest.mark.parametrize("name", ["Sphere", "Step"])
+def test_separable_smoke(name):
+    """Smoke test: default variant runs cleanly on representative separable
+    functions (one pymoo-backed: Sphere; one local: Step)."""
+    from benchmarks.suites import SEPARABLE_FUNCS
+    Cls = dict(SEPARABLE_FUNCS)[name]
+    problem = Cls(ndim=DIM)
+    variant = next(v for v in VARIANTS if v.name == "SGA_baseline")
+    result = run_sga(problem, variant, pop_size=POP, max_fes=MAX_FES, seed=0)
+
+    assert result["error"] >= 0.0
+    assert result["fes_used"] <= MAX_FES
+    assert len(result["best_solution"]) == DIM
+    sol = np.asarray(result["best_solution"], dtype=float)
+    assert np.all(sol >= problem.lb - 1e-9)
+    assert np.all(sol <= problem.ub + 1e-9)
+
+
 def test_seed_reproducibility():
     """Two runs with the same seed must give identical errors."""
     variant = next(v for v in VARIANTS if v.name == "SGA+chaotic_perturb_mut")

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ga.core import FeatureConfig, default_select
 from ga import features as feat
-from benchmarks.cec2022 import run_protocol
+from benchmarks.suites import run_protocol, run_separable_protocol
 from analysis.stats import summarize, write_summary
 from analysis import plots as plot_mod
 from persistence import ExperimentRecorder
@@ -404,9 +404,15 @@ def main():
     parser.add_argument("--max-gen", type=int, default=None,
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
+    parser.add_argument("--suite", type=str, default="cec2022",
+                        choices=["cec2022", "separable"],
+                        help="Benchmark suite. 'cec2022' (default) or "
+                             "'separable' (Sphere/Rastrigin/Schwefel/"
+                             "SumOfDifferentPowers/Step, any dim).")
     parser.add_argument("--functions", type=str, default=None,
-                        help="Comma-separated CEC 2022 function names to run "
-                             "(e.g. F1 or F1,F3,F7). Default: all 12.")
+                        help="Comma-separated function names to run "
+                             "(e.g. F1,F3,F7 for cec2022; Sphere,Step for "
+                             "separable). Default: all in the suite.")
     parser.add_argument("--n-runs", type=int, default=None,
                         help="Independent seeds per (variant, function). "
                              "Default: 5 (demo) / 30 (full).")
@@ -472,7 +478,8 @@ def main():
         if args.functions else None
     )
 
-    results = run_protocol(
+    protocol = run_protocol if args.suite == "cec2022" else run_separable_protocol
+    results = protocol(
         variants, dim=args.dim, n_runs=n_runs,
         max_fes=max_fes, pop_size=pop_size,
         recorder=recorder, record_history=not args.no_history,

@@ -20,6 +20,7 @@ dependencies = [
     "statsmodels",
     "cloudpickle",
     "setuptools<81",
+    "pymoo>=0.6,<0.7",
 ]
 
 [tool.setuptools.packages.find]
