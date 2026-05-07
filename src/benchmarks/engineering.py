@@ -124,7 +124,16 @@ class PressureVessel(EngineeringProblem):
     LB = [0.0625, 0.0625, 10.0, 10.0]
     UB = [99.0,   99.0,   200.0, 200.0]
     F_GLOBAL = 6059.714335048436
-    F_OFFSET = 1.0e7
+    # Deb-style scalar encoding requires all feasible objectives to remain
+    # strictly below F_OFFSET. Use a conservative bound from the box upper
+    # limits (the objective is increasing in Ts, Th, R, and L on this domain)
+    # and add a small margin to preserve strict inequality.
+    F_OFFSET = 1.01 * (
+        0.6224 * UB[0] * UB[2] * UB[3]
+        + 1.7781 * UB[1] * UB[2] * UB[2]
+        + 3.1661 * UB[0] * UB[0] * UB[3]
+        + 19.84 * UB[0] * UB[0] * UB[2]
+    )
 
     def _canonicalize(self, x):
         x = np.array(x, dtype=float)
