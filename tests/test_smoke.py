@@ -119,6 +119,55 @@ def test_every_public_feature_has_a_variant():
     )
 
 
+@pytest.mark.parametrize("name", [
+    "TensionCompressionSpring", "PressureVessel", "WeldedBeam", "SpeedReducer",
+])
+def test_engineering_problems_construct_and_evaluate(name):
+    """Each engineering problem instantiates with the expected fixed dim,
+    evaluates an in-bounds point, and uses Deb's scalar-encoded fitness:
+    a deliberately infeasible point yields fitness >= F_OFFSET."""
+    from benchmarks.engineering import ENGINEERING_FUNCS
+    Cls = dict(ENGINEERING_FUNCS)[name]
+    problem = Cls()
+
+    assert problem.ndim == Cls.NDIM
+    assert problem.lb.shape == (problem.ndim,)
+    assert problem.ub.shape == (problem.ndim,)
+    assert np.all(problem.lb < problem.ub)
+    assert problem.f_global > 0.0
+
+    # Evaluate the lower-bound corner — far from feasibility for these
+    # problems; we don't assert feasibility, only that evaluate returns a
+    # finite scalar respecting the encoding contract.
+    f_lb = problem.evaluate(problem.lb.copy())
+    assert np.isfinite(f_lb)
+
+    # The lower-bound corner should be infeasible for at least
+    # Spring/Vessel/Beam/Reducer in these engineering benchmarks.
+    g_lb = problem.constraints(problem._canonicalize(problem.lb.copy()))
+    if np.any(g_lb > 0.0):
+        assert f_lb >= Cls.F_OFFSET, (
+            f"{name}: infeasible point should yield fitness >= F_OFFSET "
+            f"({Cls.F_OFFSET}); got {f_lb}"
+        )
+
+
+def test_engineering_smoke_run():
+    """One short SGA run on TensionCompressionSpring completes and returns
+    a valid result dict."""
+    from benchmarks.engineering import TensionCompressionSpring
+    problem = TensionCompressionSpring()
+    variant = next(v for v in VARIANTS if v.name == "SGA_baseline")
+    r = run_sga(problem, variant, pop_size=POP, max_fes=MAX_FES, seed=0)
+
+    assert r["fes_used"] <= MAX_FES
+    assert len(r["best_solution"]) == problem.ndim
+    sol = np.asarray(r["best_solution"], dtype=float)
+    assert np.all(sol >= problem.lb - 1e-9)
+    assert np.all(sol <= problem.ub + 1e-9)
+    assert np.isfinite(r["best_fitness"])
+
+
 def test_islands_with_diversity():
     """Regression check: islands path must apply diversity_fn (was skipped)."""
     from ga.core import FeatureConfig

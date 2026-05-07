@@ -29,6 +29,7 @@ from pymoo.problems.single import Rastrigin as _PymooRastrigin
 from pymoo.problems.single import Schwefel as _PymooSchwefel
 
 from ga.core import run_sga
+from benchmarks.engineering import ENGINEERING_FUNCS
 
 
 # ============================================================================
@@ -161,6 +162,7 @@ SEPARABLE_FUNCS = [
 _SUITES = {
     "cec2022": dict(CEC2022_FUNCS),
     "separable": dict(SEPARABLE_FUNCS),
+    "engineering": dict(ENGINEERING_FUNCS),
 }
 
 
@@ -334,6 +336,27 @@ def run_separable_protocol(variants, dim=10, n_runs=30, max_fes=None,
         funcs_registry=SEPARABLE_FUNCS,
         dim_supported_map=None,
         variants=variants, dim=dim, n_runs=n_runs, max_fes=max_fes,
+        pop_size=pop_size, recorder=recorder, record_history=record_history,
+        workers=workers, functions=functions,
+    )
+
+
+def run_engineering_protocol(variants, dim=None, n_runs=30, max_fes=None,
+                             pop_size=50, recorder=None, record_history=True,
+                             workers=1, functions=None):
+    """Same contract as `run_protocol` but for the engineering suite.
+
+    Each engineering problem has a fixed dimensionality (3-7); the `dim`
+    argument is passed through to the worker but ignored by the problem
+    constructors. Constraints are handled via Deb's feasibility rules
+    encoded into the scalar fitness — see `benchmarks/engineering.py`.
+    """
+    return _run_protocol(
+        suite_name="engineering",
+        funcs_registry=ENGINEERING_FUNCS,
+        dim_supported_map=None,
+        variants=variants, dim=(dim if dim is not None else 0),
+        n_runs=n_runs, max_fes=max_fes,
         pop_size=pop_size, recorder=recorder, record_history=record_history,
         workers=workers, functions=functions,
     )

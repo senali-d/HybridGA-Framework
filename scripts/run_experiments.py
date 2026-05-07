@@ -21,7 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ga.core import FeatureConfig, default_select
 from ga import features as feat
-from benchmarks.suites import run_protocol, run_separable_protocol
+from benchmarks.suites import (
+    run_protocol, run_separable_protocol, run_engineering_protocol,
+)
 from analysis.stats import summarize, write_summary
 from analysis import plots as plot_mod
 from persistence import ExperimentRecorder
@@ -405,14 +407,18 @@ def main():
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
     parser.add_argument("--suite", type=str, default="cec2022",
-                        choices=["cec2022", "separable"],
-                        help="Benchmark suite. 'cec2022' (default) or "
+                        choices=["cec2022", "separable", "engineering"],
+                        help="Benchmark suite. 'cec2022' (default), "
                              "'separable' (Sphere/Rastrigin/Schwefel/"
-                             "SumOfDifferentPowers/Step, any dim).")
+                             "SumOfDifferentPowers/Step, any dim), or "
+                             "'engineering' (TensionCompressionSpring/"
+                             "PressureVessel/WeldedBeam/SpeedReducer; "
+                             "fixed dim, --dim ignored).")
     parser.add_argument("--functions", type=str, default=None,
                         help="Comma-separated function names to run "
                              "(e.g. F1,F3,F7 for cec2022; Sphere,Step for "
-                             "separable). Default: all in the suite.")
+                             "separable; WeldedBeam for engineering). "
+                             "Default: all in the suite.")
     parser.add_argument("--n-runs", type=int, default=None,
                         help="Independent seeds per (variant, function). "
                              "Default: 5 (demo) / 30 (full).")
@@ -421,7 +427,11 @@ def main():
     # Mode defaults; explicit flags override.
     if args.full:
         n_runs = 30
-        max_fes = 200_000 if args.dim <= 10 else 1_000_000
+        if args.suite == "engineering":
+            # Fixed-dim, low-D problems: literature-standard budget.
+            max_fes = 50_000
+        else:
+            max_fes = 200_000 if args.dim <= 10 else 1_000_000
         pop_size = 50
         mode = "FULL"
     else:
@@ -478,7 +488,11 @@ def main():
         if args.functions else None
     )
 
-    protocol = run_protocol if args.suite == "cec2022" else run_separable_protocol
+    protocol = {
+        "cec2022": run_protocol,
+        "separable": run_separable_protocol,
+        "engineering": run_engineering_protocol,
+    }[args.suite]
     results = protocol(
         variants, dim=args.dim, n_runs=n_runs,
         max_fes=max_fes, pop_size=pop_size,
