@@ -124,13 +124,16 @@ class _PymooAdapter(_SeparableProblem):
         self.ub = np.asarray(self._inner.xu, dtype=float)
 
     def _eval(self, x):
-        out = {}
-        self._inner._evaluate(x[None, :], out)
-        return out["F"][0]
+        return float(self._inner.evaluate(x[None, :])[0, 0])
 
 
 class Rastrigin(_PymooAdapter):
-    """f(x) = 10n + Σ[x_i^2 - 10 cos(2π x_i)] (pymoo). Optimum f*=0 at x*=0."""
+    """f(x) = 10n + Σ[x_i^2 - 10 cos(2π x_i)] (pymoo). Optimum f*=0 at x*=0.
+
+    Bounds inherit pymoo's [-5, 5]ⁿ (slightly tighter than the canonical
+    [-5.12, 5.12]ⁿ used in many references). Kept in sync with pymoo so
+    upgrades don't desync the bounds silently.
+    """
     _PYMOO_CLS = _PymooRastrigin
     _LB, _UB = -5.12, 5.12  # used only if pymoo bounds were unavailable
 

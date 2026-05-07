@@ -41,10 +41,11 @@ def test_variant_runs_clean(variant):
     assert np.all(sol <= np.asarray(problem.ub) + 1e-9)
 
 
-@pytest.mark.parametrize("name", ["Sphere", "Step"])
+@pytest.mark.parametrize("name", ["Sphere", "Rastrigin", "Step"])
 def test_separable_smoke(name):
     """Smoke test: default variant runs cleanly on representative separable
-    functions (one pymoo-backed: Sphere; one local: Step)."""
+    functions. Covers a local impl (Sphere, Step) and the pymoo-adapter
+    path (Rastrigin) so a future pymoo API break shows up in CI."""
     from benchmarks.suites import SEPARABLE_FUNCS
     Cls = dict(SEPARABLE_FUNCS)[name]
     problem = Cls(ndim=DIM)
@@ -57,6 +58,26 @@ def test_separable_smoke(name):
     sol = np.asarray(result["best_solution"], dtype=float)
     assert np.all(sol >= problem.lb - 1e-9)
     assert np.all(sol <= problem.ub + 1e-9)
+
+
+def test_separable_optima():
+    """Each separable problem must report f_global at its known optimum.
+    Catches formula/bound regressions; runs in milliseconds (no GA)."""
+    from benchmarks.suites import SEPARABLE_FUNCS
+    optima = {
+        "Sphere": np.zeros(10),
+        "Rastrigin": np.zeros(10),
+        "Schwefel": np.full(10, 420.9687),
+        "SumOfDifferentPowers": np.zeros(10),
+        "Step": np.zeros(10),
+    }
+    for name, Cls in SEPARABLE_FUNCS:
+        p = Cls(ndim=10)
+        f = p.evaluate(optima[name])
+        assert abs(f - p.f_global) < 1e-3, (
+            f"{name}: f(x*)={f} but f_global={p.f_global}"
+        )
+        assert p.lb.shape == p.ub.shape == (10,)
 
 
 def test_seed_reproducibility():
