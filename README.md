@@ -1,9 +1,17 @@
-# SGA + Nature-Inspired Features on CEC 2022
+# SGA + Nature-Inspired Features
 
 A clean experimental pipeline to study how features extracted from recent
 nature-inspired algorithms affect the behavior of the Simple Genetic
 Algorithm. Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022 functions)
-+ **SciPy** (statistical tests).
++ **pymoo** (separable problems) + **SciPy** (statistical tests).
+
+Three benchmark categories are supported:
+
+| Suite | Problem class | Functions | Dim | Notes |
+|---|---|---|---|---|
+| `cec2022` | Boundary-constrained black-box (CEC 2022 single-objective) | F1–F12 | {2, 10, 20} | Default; competition protocol |
+| `separable` | Classical separable scalable functions | Sphere, Rastrigin, Schwefel, SumOfDifferentPowers, Step | any | For diagnostics / unit-feature isolation |
+| `engineering` | Real-world *constrained* mechanical-design problems | TensionCompressionSpring, PressureVessel, WeldedBeam, SpeedReducer | fixed (3–7) | Mixed-integer; Deb feasibility-rule encoding into scalar fitness |
 
 ## Project layout
 
@@ -13,8 +21,9 @@ HybridGA-Framework/
 │   ├── ga/              # SGA backbone + nature-inspired feature plug-ins
 │   │   ├── core.py
 │   │   └── features.py
-│   ├── benchmarks/      # CEC 2022 wrappers + multi-variant protocol runner
-│   │   └── cec2022.py
+│   ├── benchmarks/      # Suite wrappers + multi-variant protocol runners
+│   │   ├── suites.py        # cec2022 + separable + engineering registries
+│   │   └── engineering.py   # 4 constrained mechanical-design problems
 │   └── analysis/        # Statistical summaries (Wilcoxon, Friedman, plotting)
 │       └── stats.py
 ├── scripts/
@@ -52,19 +61,50 @@ python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
 # Restrict to a subset of CEC 2022 functions (single or multiple)
 python scripts/run_experiments.py --variants SGA_baseline --functions F1
 python scripts/run_experiments.py --functions F1,F3,F7 --workers 6
+
+# Separable suite (diagnostics / per-feature isolation; --dim is honored)
+python scripts/run_experiments.py --suite separable --dim 30
+python scripts/run_experiments.py --suite separable --functions Sphere,Step
+
+# Engineering suite (constrained design problems; fixed dim, --dim ignored)
+python scripts/run_experiments.py --suite engineering
+python scripts/run_experiments.py --suite engineering --full           # 50k FEs/run
+python scripts/run_experiments.py --suite engineering --functions WeldedBeam
 ```
+
+### Engineering suite specifics
+
+The engineering problems are **fixed-dimensionality** (Spring=3, PressureVessel=4,
+WeldedBeam=4, SpeedReducer=7), so `--dim` is ignored when `--suite engineering`.
+Constraints are handled via **Deb's feasibility rules encoded into a scalar
+fitness**:
+
+```
+feasible   →  evaluate(x) = f(x)             (always < F_OFFSET)
+infeasible →  evaluate(x) = F_OFFSET + Σ max(0, g_i(x))
+```
+
+This means *every existing GA operator works unchanged* — no constraint
+handling needs to be added to selection/replacement. To check whether the
+best solution of a run is feasible, compare `best_fitness < F_OFFSET`.
+Discrete variables (vessel thicknesses snap to 0.0625″ multiples; reducer
+teeth count is integer) are canonicalized inside `evaluate()`.
+
+Default budget under `--full` for the engineering suite is **50,000 FEs/run**
+(low-D problems; literature-standard).
 
 ### Protocol flags
 
 | Flag | Default (demo / full) | Notes |
 |---|---|---|
-| `--dim` | 10 | CEC 2022 supports {2, 10, 20} |
+| `--suite` | `cec2022` | One of `cec2022`, `separable`, `engineering` |
+| `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored for `engineering` |
 | `--pop-size` | 30 / 50 | Population size |
 | `--max-fes` | 5000 / 200k (D≤10) or 1M (D>10) | FE budget per run |
 | `--max-gen` | — | Cap by generations instead; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
 | `--variants` | (all) | Comma-separated substring filter, e.g. `pher,levy` |
-| `--functions` | (all 12) | Comma-separated CEC 2022 function names, e.g. `F1` or `F1,F3,F7` |
+| `--functions` | (all in suite) | Comma-separated function names, e.g. `F1,F3,F7` (cec2022), `Sphere,Step` (separable), `WeldedBeam` (engineering) |
 | `--workers` | 1 | Process-pool size; results are seed-deterministic |
 | `--no-history` / `--no-plots` / `--no-stats` | off | Skip outputs |
 | `--tag` | timestamp | Override archive folder name |
