@@ -121,8 +121,8 @@ def test_engineering_problems_construct_and_evaluate(name):
     f_lb = problem.evaluate(problem.lb.copy())
     assert np.isfinite(f_lb)
 
-    # A grossly out-of-physics point (zeros, then clipped to LB) should be
-    # infeasible for at least Spring/Vessel/Beam/Reducer at the LB corner.
+    # The lower-bound corner should be infeasible for at least
+    # Spring/Vessel/Beam/Reducer in these engineering benchmarks.
     g_lb = problem.constraints(problem._canonicalize(problem.lb.copy()))
     if np.any(g_lb > 0.0):
         assert f_lb >= Cls.F_OFFSET, (
