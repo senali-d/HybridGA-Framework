@@ -94,8 +94,16 @@ class TensionCompressionSpring(EngineeringProblem):
     def constraints(self, x):
         d, D, N = x
         g1 = 1.0 - (D ** 3 * N) / (71785.0 * d ** 4)
-        g2 = (4.0 * D * D - d * D) / (12566.0 * (D * d ** 3 - d ** 4)) \
-             + 1.0 / (5108.0 * d * d) - 1.0
+
+        denom = 12566.0 * (D * d ** 3 - d ** 4)
+        if abs(denom) <= 1.0e-12:
+            # The literature form of g2 is singular when D == d.
+            # Treat singular / near-singular points as strongly infeasible
+            # with a large but finite violation so evaluate() stays finite.
+            g2 = 1.0e12
+        else:
+            g2 = (4.0 * D * D - d * D) / denom + 1.0 / (5108.0 * d * d) - 1.0
+
         g3 = 1.0 - (140.45 * d) / (D * D * N)
         g4 = (D + d) / 1.5 - 1.0
         return np.array([g1, g2, g3, g4])
