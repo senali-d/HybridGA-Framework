@@ -103,7 +103,8 @@ def test_every_public_feature_has_a_variant():
     referenced: set[str] = set()
     for v in VARIANTS:
         for slot in ("init_fn", "select_fn", "crossover_fn",
-                     "mutate_fn", "replace_fn", "diversity_fn"):
+                     "mutate_fn", "replace_fn", "diversity_fn",
+                     "refine_fn"):
             fn = getattr(v, slot, None)
             if fn is None:
                 continue

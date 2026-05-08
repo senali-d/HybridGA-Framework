@@ -366,6 +366,14 @@ def build_variants():
         mutate_fn=feat.make_abc_mutate(phase="mixed"),
     ))
 
+    variants.append(FeatureConfig(
+        name="SGA+pso_refine",
+        refine_fn=feat.make_sga_pso_refine(
+            top_k=5, n_iters=3, w=0.7, c1=1.5, c2=1.5,
+            every_n_gens=5,
+        ),
+    ))
+
     return variants
 
 

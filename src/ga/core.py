@@ -47,6 +47,8 @@ class FeatureConfig:
         mutate_fn=None,         # (individual, ctx) -> mutated individual
         replace_fn=None,        # (parents, offspring, ctx) -> new population
         diversity_fn=None,      # (population, ctx) -> population (optional injection)
+        refine_fn=None,         # (population, ctx) -> population (post-replacement local refinement,
+                                # e.g. nested PSO sub-loop on top-k for SGA-style hybrid)
         cx_prob=0.9,
         mut_prob=1.0,
         elitism_k=1,
@@ -63,6 +65,7 @@ class FeatureConfig:
         self.mutate_fn = mutate_fn
         self.replace_fn = replace_fn
         self.diversity_fn = diversity_fn
+        self.refine_fn = refine_fn
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
         self.elitism_k = elitism_k
@@ -245,6 +248,10 @@ def run_sga(
         "hho_energy": 1.0,                              # |E| escape energy (F20/F43)
         "config": config,                               # so operators can read e.g. mut_prob
         "bound_handling": getattr(config, "bound_handling", "clip"),
+        # Exposed for refine_fn / sub-loop operators that need to evaluate
+        # candidates inside a single GA generation while respecting MaxFES.
+        "evaluate_fn": problem.evaluate,
+        "eval_counter": None,  # filled in below once eval_counter is constructed
     }
 
     # Pick operators (use defaults if not overridden)
@@ -256,6 +263,7 @@ def run_sga(
 
     eval_counter = [0]
     evaluate_fn = problem.evaluate
+    ctx["eval_counter"] = eval_counter
 
     # ---- Initialization ----
     init_vectors = init_fn(pop_size, dim, lb, ub, ctx)
@@ -405,6 +413,18 @@ def run_sga(
             if not population:
                 break
 
+        # ---- Optional local refinement (e.g. SGA-style nested PSO) ----
+        if config.refine_fn is not None:
+            population = config.refine_fn(population, ctx)
+            for ind in population:
+                if not ind.fitness.valid and eval_counter[0] < max_fes:
+                    f = evaluate_fn(np.asarray(ind))
+                    ind.fitness.values = (float(f),)
+                    eval_counter[0] += 1
+            population = [ind for ind in population if ind.fitness.valid]
+            if not population:
+                break
+
         # ---- Track best & history ----
         cur_best = min(population, key=lambda x: x.fitness.values[0])
         if cur_best.fitness.values[0] < best.fitness.values[0]:
@@ -520,6 +540,8 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             "config": config,
             "bound_handling": getattr(config, "bound_handling", "clip"),
             "island_id": k,
+            "evaluate_fn": problem.evaluate,
+            "eval_counter": eval_counter,
         }
         init_vectors = init_fn(island_pop_sizes[k], dim, lb, ub, ctx)
         pop = [make_individual(apply_bounds(v, lb, ub, mode=ctx["bound_handling"], rng=rng)) for v in init_vectors]
@@ -591,6 +613,17 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
 
             if config.diversity_fn is not None:
                 isl["pop"] = config.diversity_fn(isl["pop"], ctx)
+                for ind in isl["pop"]:
+                    if not ind.fitness.valid and eval_counter[0] < max_fes:
+                        f = evaluate_fn(np.asarray(ind))
+                        ind.fitness.values = (float(f),)
+                        eval_counter[0] += 1
+                isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
+                if not isl["pop"]:
+                    continue
+
+            if config.refine_fn is not None:
+                isl["pop"] = config.refine_fn(isl["pop"], ctx)
                 for ind in isl["pop"]:
                     if not ind.fitness.valid and eval_counter[0] < max_fes:
                         f = evaluate_fn(np.asarray(ind))

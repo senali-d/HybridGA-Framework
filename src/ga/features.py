@@ -1927,3 +1927,100 @@ def make_abc_mutate(phase="employed", n_dims=1):
         new[dims] = x[dims] + phi * (x[dims] - xk[dims])
         return np.clip(new, ctx["lb"], ctx["ub"]).tolist()
     return mutate_abc
+
+
+# ============================================================
+# F75 — SGA-style nested PSO refinement on top-k elites
+# ============================================================
+def make_sga_pso_refine(top_k=5, n_iters=3, w=0.7, c1=1.5, c2=1.5,
+                       vmax_frac=0.2, every_n_gens=1, stagnation_threshold=0):
+    """Swarming Genetic Algorithm: after GA replacement, run a small PSO
+    sub-swarm on the top-k individuals for `n_iters` velocity steps.
+
+    Each particle keeps its personal best (pbest) across generations via
+    `ctx["_sga_pso_state"]`; the global best (gbest) is the GA's
+    `best_so_far`. FE cost per generation: ~ top_k * n_iters, charged
+    against `ctx["eval_counter"]` and capped by `ctx["max_fes"]`.
+
+    Gating:
+        every_n_gens: run only every Nth generation (1 = every gen).
+        stagnation_threshold: skip unless ctx['stagnation_counter'] >= T.
+
+    Plug as `refine_fn` in FeatureConfig — runs once per generation after
+    replacement.
+    """
+    def refine(population, ctx):
+        evaluate_fn = ctx.get("evaluate_fn")
+        eval_counter = ctx.get("eval_counter")
+        if evaluate_fn is None or eval_counter is None:
+            return population  # core not configured to support sub-loop
+        max_fes = ctx["max_fes"]
+        if eval_counter[0] >= max_fes:
+            return population
+        if every_n_gens > 1 and (ctx.get("gen", 0) % every_n_gens) != 0:
+            return population
+        if ctx.get("stagnation_counter", 0) < stagnation_threshold:
+            return population
+
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        vmax = vmax_frac * (ub - lb)
+
+        # Sort population (best first); pick top-k as particles.
+        order = sorted(range(len(population)),
+                       key=lambda i: population[i].fitness.values[0])
+        k = min(top_k, len(order))
+        idxs = order[:k]
+
+        # Persistent per-slot PSO state (velocity + pbest position/fitness).
+        # Keyed by rank slot rather than identity so it survives replacement.
+        state = ctx.setdefault("_sga_pso_state", {})
+        gbest = ctx.get("best_so_far")
+        if gbest is None:
+            return population
+        g = _arr(gbest)
+
+        for it in range(n_iters):
+            for slot, idx in enumerate(idxs):
+                if eval_counter[0] >= max_fes:
+                    return population
+                ind = population[idx]
+                x = _arr(ind)
+                fx = ind.fitness.values[0]
+                s = state.get(slot)
+                if s is None:
+                    v = np.zeros_like(x)
+                    pbest_x = x.copy()
+                    pbest_f = fx
+                else:
+                    v, pbest_x, pbest_f = s
+                    if v.shape != x.shape:
+                        v = np.zeros_like(x)
+                    if pbest_x.shape != x.shape:
+                        pbest_x = x.copy()
+                        pbest_f = fx
+
+                r1 = rng.random(x.shape)
+                r2 = rng.random(x.shape)
+                v = w * v + c1 * r1 * (pbest_x - x) + c2 * r2 * (g - x)
+                v = np.clip(v, -vmax, vmax)
+                new_x = np.clip(x + v, lb, ub)
+
+                f_new = float(evaluate_fn(new_x))
+                eval_counter[0] += 1
+
+                # Build a fresh Individual (avoid mutating shared fitness state).
+                new_ind = creator.Individual(new_x.tolist())
+                new_ind.age = getattr(ind, "age", 0)
+                new_ind.fitness.values = (f_new,)
+                population[idx] = new_ind
+
+                if f_new < pbest_f:
+                    pbest_x = new_x.copy()
+                    pbest_f = f_new
+                if f_new < gbest.fitness.values[0]:
+                    g = new_x.copy()  # update local view of gbest
+
+                state[slot] = (v, pbest_x, pbest_f)
+        return population
+    return refine
