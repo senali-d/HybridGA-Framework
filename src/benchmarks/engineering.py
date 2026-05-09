@@ -270,9 +270,125 @@ class SpeedReducer(EngineeringProblem):
         return np.array([g1, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11])
 
 
+# ============================================================================
+# Three-Bar Truss
+# ----------------------------------------------------------------------------
+# Variables: x = [A1, A2]  (cross-sectional areas of bars; bar 3 area == bar 1)
+# Minimize:  f = (2*sqrt(2)*A1 + A2) * L,  L = 100 cm
+# Subject to three stress constraints (Nowacki 1980; Ray & Saini 2001).
+# Loading: P = 2 kN/cm^2, sigma_max = 2 kN/cm^2.
+# ============================================================================
+
+class ThreeBarTruss(EngineeringProblem):
+    NDIM = 2
+    LB = [1e-3, 1e-3]
+    UB = [1.0, 1.0]
+    F_GLOBAL = 263.8958433764628
+    F_OFFSET = 1.0e3
+
+    _L = 100.0
+    _P = 2.0
+    _SIGMA = 2.0
+
+    def _objective(self, x):
+        A1, A2 = x
+        return (2.0 * np.sqrt(2.0) * A1 + A2) * self._L
+
+    def constraints(self, x):
+        A1, A2 = x
+        denom = np.sqrt(2.0) * A1 * A1 + 2.0 * A1 * A2
+        if abs(denom) <= 1e-12:
+            return np.array([1.0e6, 1.0e6, 1.0e6])
+        g1 = (np.sqrt(2.0) * A1 + A2) / denom * self._P - self._SIGMA
+        g2 = A2 / denom * self._P - self._SIGMA
+        g3 = 1.0 / (np.sqrt(2.0) * A2 + A1) * self._P - self._SIGMA
+        return np.array([g1, g2, g3])
+
+
+# ============================================================================
+# I-Beam (vertical deflection minimization)
+# ----------------------------------------------------------------------------
+# Variables: x = [b (flange width), h (section height),
+#                 tw (web thickness), tf (flange thickness)]
+# Minimize:  vertical deflection f = PL^3 / (48 E I), with
+#            I = (tw (h - 2 tf)^3) / 12 + (b tf^3)/6 + 2 b tf ((h - tf)/2)^2
+# Constraints: cross-section area cap and combined-stress limit.
+# Reference: Gold & Krishnamurty (1997); Coello & Christiansen (2000).
+# ============================================================================
+
+class IBeam(EngineeringProblem):
+    NDIM = 4
+    LB = [10.0, 10.0, 0.9, 0.9]
+    UB = [50.0, 80.0, 5.0, 5.0]
+    F_GLOBAL = 0.0130741
+    F_OFFSET = 1.0e2
+
+    _P = 600.0       # kN, vertical load
+    _Q = 50.0        # kN, lateral load
+    _L = 200.0       # cm, span
+    _E = 2.0e4       # kN/cm^2
+
+    def _objective(self, x):
+        b, h, tw, tf = x
+        I = (tw * (h - 2.0 * tf) ** 3) / 12.0 \
+            + (b * tf ** 3) / 6.0 \
+            + 2.0 * b * tf * ((h - tf) / 2.0) ** 2
+        if I <= 1e-12:
+            return 1.0e6
+        return (self._P * self._L ** 3) / (48.0 * self._E * I)
+
+    def constraints(self, x):
+        b, h, tw, tf = x
+        area = 2.0 * b * tf + tw * (h - 2.0 * tf)
+        g1 = area - 300.0  # cross-section area <= 300 cm^2
+
+        I_xx = (tw * (h - 2.0 * tf) ** 3) / 12.0 \
+            + (b * tf ** 3) / 6.0 \
+            + 2.0 * b * tf * ((h - tf) / 2.0) ** 2
+        I_yy = ((h - 2.0 * tf) * tw ** 3) / 12.0 \
+            + 2.0 * (tf * b ** 3) / 12.0
+        if I_xx <= 1e-12 or I_yy <= 1e-12:
+            return np.array([g1, 1.0e6])
+        sigma = (180.0 * self._P) / I_xx + (15.0 * self._Q) / I_yy
+        g2 = sigma - 6.0
+        return np.array([g1, g2])
+
+
+# ============================================================================
+# Cantilever Beam (5-segment hollow square cross-section)
+# ----------------------------------------------------------------------------
+# Variables: x = [x1, x2, x3, x4, x5]  (segment side lengths)
+# Minimize:  f = 0.0624 * (x1 + x2 + x3 + x4 + x5)
+# Subject to: g1 = 61/x1^3 + 37/x2^3 + 19/x3^3 + 7/x4^3 + 1/x5^3 - 1 <= 0
+# Reference: Fleury & Braibant (1986); Chickermane & Gea (1996).
+# ============================================================================
+
+class Cantilever(EngineeringProblem):
+    NDIM = 5
+    LB = [0.01, 0.01, 0.01, 0.01, 0.01]
+    UB = [100.0, 100.0, 100.0, 100.0, 100.0]
+    F_GLOBAL = 1.33995636
+    F_OFFSET = 1.0e2
+
+    def _objective(self, x):
+        return 0.0624 * float(np.sum(x))
+
+    def constraints(self, x):
+        x1, x2, x3, x4, x5 = x
+        denoms = np.array([x1, x2, x3, x4, x5]) ** 3
+        if np.any(denoms <= 1e-12):
+            return np.array([1.0e6])
+        g1 = (61.0 / denoms[0] + 37.0 / denoms[1] + 19.0 / denoms[2]
+              + 7.0 / denoms[3] + 1.0 / denoms[4]) - 1.0
+        return np.array([g1])
+
+
 ENGINEERING_FUNCS = [
     ("TensionCompressionSpring", TensionCompressionSpring),
     ("PressureVessel",           PressureVessel),
     ("WeldedBeam",               WeldedBeam),
+    ("ThreeBarTruss",            ThreeBarTruss),
+    ("IBeam",                    IBeam),
+    ("Cantilever",               Cantilever),
     ("SpeedReducer",             SpeedReducer),
 ]

@@ -13,6 +13,7 @@ USAGE:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -20,6 +21,52 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ga.core import FeatureConfig, default_select
+from ga.build import baseline_from_config, variant_from_baseline, variant_diff
+from ga.variants import VARIANTS, variants_for_encoding
+
+
+CONFIG_DIR = Path(__file__).resolve().parents[1] / "configs"
+
+
+def load_suite_config(suite):
+    """Load the per-suite JSON config (configs/<suite>.json)."""
+    path = CONFIG_DIR / f"{suite}.json"
+    if not path.exists():
+        return None
+    with path.open() as f:
+        return json.load(f)
+
+
+def apply_cli_overrides(suite_cfg, args):
+    """Mutate the loaded suite config in-place from CLI flags before
+    constructing baselines. Keeps the runner's `--pop-size`/`--max-fes`/
+    `--n-runs` flags as universal escape hatches that propagate to every
+    variant (since variants inherit from baseline)."""
+    if args.pop_size is not None:
+        suite_cfg["pop_size"] = int(args.pop_size)
+    if args.n_runs is not None:
+        suite_cfg["n_runs"] = int(args.n_runs)
+    if args.max_fes is not None:
+        suite_cfg["max_fes"] = int(args.max_fes)
+    if args.max_gen is not None:
+        # Convert max_gen → max_fes using current pop_size.
+        suite_cfg["max_fes"] = int(args.max_gen) * int(suite_cfg["pop_size"])
+    return suite_cfg
+
+
+def resolve_max_fes(suite_cfg, dim):
+    mf = suite_cfg.get("max_fes")
+    if mf is None:
+        return None
+    if isinstance(mf, dict):
+        table = {int(k): int(v) for k, v in mf.items()}
+        if dim not in table:
+            raise ValueError(
+                f"max_fes table has no entry for dim={dim}; "
+                f"available dims: {sorted(table)}"
+            )
+        return table[dim]
+    return int(mf)
 from ga import features as feat
 from benchmarks.suites import (
     run_protocol, run_separable_protocol, run_engineering_protocol,
@@ -29,374 +76,11 @@ from analysis import plots as plot_mod
 from persistence import ExperimentRecorder
 
 
-def build_variants():
-    """One baseline + a Tier-1 set of feature-injected variants."""
-    variants = []
-
-    variants.append(FeatureConfig(name="SGA_baseline"))
-
-    variants.append(FeatureConfig(
-        name="SGA+OBL_init",
-        init_fn=feat.init_opposition_strict,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+GWO_select",
-        select_fn=feat.select_leader_hierarchy,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+chaotic_init",
-        init_fn=feat.init_chaotic,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+Levy_mut",
-        mutate_fn=feat.mutate_levy,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+DE_mut",
-        select_fn=feat.with_population_aware_select(default_select),
-        mutate_fn=feat.make_de_mutation(F=0.5),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+greedy_replace",
-        replace_fn=feat.replace_greedy,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+adaptive_mut",
-        mutate_fn=feat.make_adaptive_mutate(base_indpb=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+restart",
-        diversity_fn=feat.make_diversity_restart(
-            stagnation_threshold=15, restart_fraction=0.2),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+CLONALG_hyper",
-        mutate_fn=feat.make_inverse_hypermutate(rho=5.0, sigma_max=0.2),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+clonal_expand", select_fn=feat.select_clonal_expansion,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_evap",
-        mutate_fn=feat.make_pheromone_evaporation(rho=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_deposit",
-        mutate_fn=feat.make_pheromone_deposit(rho=0.1, Q=1.0),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_heuristic",
-        mutate_fn=feat.make_pheromone_heuristic(rho=0.1, alpha=1.0, beta=2.0),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_minmax",
-        mutate_fn=feat.make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_eas",
-        mutate_fn=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
-    ))
-
-    # ---------- Tier 2 (remaining) ----------
-    variants.append(FeatureConfig(
-        name="SGA+chaotic_tent_init", init_fn=feat.init_chaotic_tent,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+chaotic_sin_init", init_fn=feat.init_chaotic_sinusoidal,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+encircling_mut", mutate_fn=feat.mutate_encircling_prey,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+archive_replace",
-        replace_fn=feat.make_archive_replace(fraction=0.1),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+islands", n_islands=4, migration_interval=10,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+aging",
-        diversity_fn=feat.make_aging_replace(tau=20),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+receptor_edit",
-        diversity_fn=feat.make_receptor_editing(fraction=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+affinity_gauss",
-        mutate_fn=feat.make_affinity_gaussian(sigma_max=0.2, rho=2.0),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_asrank",
-        mutate_fn=feat.make_pheromone_asrank(rho=0.1, w=6),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_edge_cx",
-        crossover_fn=feat.make_pheromone_edge_crossover(rho=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_weighted_cx",
-        crossover_fn=feat.make_pheromone_weighted_crossover(rho=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_candlist",
-        select_fn=feat.make_candidate_list_select(m=5, tournsize=2),
-    ))
-
-    # ---------- Tier 3 ----------
-    variants.append(FeatureConfig(
-        name="SGA+spiral_woa_mut", mutate_fn=feat.mutate_spiral_woa,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+sine_cosine_mut", mutate_fn=feat.mutate_sine_cosine,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+poi_select", select_fn=feat.select_probability_of_improvement,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+pollination_mut", mutate_fn=feat.make_pollination_switch(),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+firefly_mut", mutate_fn=feat.make_firefly_attraction(),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+gauss_cauchy_mut", mutate_fn=feat.make_gauss_cauchy_mix(),
-    ))
-    # Canonical fast-GA: Levy step + scale=0.01 (best on F1/F8, ties baseline on F6).
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_mut",
-        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="levy", scale=0.01),
-    ))
-    # Ablation: Cauchy step variant.
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_cauchy_mut",
-        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.01),
-    ))
-    # Ablation: annealed scale (large early, small late) — wins on F8 composition.
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_anneal_mut",
-        mutate_fn=feat.make_fast_ga_mutate(
-            beta=1.5, dist="levy", scale=0.1, scale_end=0.001),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+t_gated_mut",
-        mutate_fn=feat.make_t_ratio_gated([
-            (0.5, feat.mutate_levy),
-            (1.0, feat.mutate_encircling_prey),
-        ]),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+periodic_obl",
-        diversity_fn=feat.make_periodic_obl(period=10, fraction=0.3),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+neg_select",
-        mutate_fn=feat.make_negative_selection(threshold=0.05, push=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+immune_memory",
-        diversity_fn=feat.make_immune_memory_pool(k_inject=2, dist_thresh_frac=0.05),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+adaptive_pop",
-        replace_fn=feat.make_adaptive_resize(min_n=20, max_n=80, target_div_frac=0.05),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+multiparent_cx",
-        crossover_fn=feat.crossover_multiparent,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+net_suppress",
-        diversity_fn=feat.make_network_suppression(threshold_frac=0.02),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+cauchy_elite",
-        mutate_fn=feat.make_cauchy_hypermutate_elite(elite_frac=0.2, scale=0.1),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pher_guided_mut",
-        mutate_fn=feat.make_pheromone_guided_mutation(
-            rho=0.1, alpha=1.0, beta=2.0),
-    ))
-
-    # ---------- Tier 4 ----------
-    # Initialization
-    variants.append(FeatureConfig(
-        name="SGA+lhs_init", init_fn=feat.init_latin_hypercube,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+sobol_init", init_fn=feat.init_sobol,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+halton_init", init_fn=feat.init_halton,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+levy_init", init_fn=feat.init_levy_distributed,
-    ))
-    # Selection
-    variants.append(FeatureConfig(
-        name="SGA+adaptive_tourney", select_fn=feat.select_adaptive_tournament,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+archive_mating", select_fn=feat.select_best_archive_mating,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+immigrant",
-        diversity_fn=feat.make_random_immigrant(fraction=0.1),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+crowding_select", select_fn=feat.select_distance_crowding,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+social_rank_select", select_fn=feat.select_social_rank_weighted,
-    ))
-    # Variation
-    variants.append(FeatureConfig(
-        name="SGA+mfo_spiral_mut", mutate_fn=feat.mutate_mfo_spiral,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+bubble_net_mut", mutate_fn=feat.mutate_bubble_net,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+hho_besiege_mut", mutate_fn=feat.mutate_hho_besiege,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+brownian_mut", mutate_fn=feat.make_brownian(),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+eddy_fad_mut", mutate_fn=feat.make_eddy_fad(p_jump=0.2),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+bat_mut", mutate_fn=feat.mutate_bat_echolocation,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+gsa_mut", mutate_fn=feat.mutate_gsa_attraction,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+eo_pool_mut", mutate_fn=feat.mutate_equilibrium_pool,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+sma_mut", mutate_fn=feat.mutate_sma_oscillation,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+aquila_mut", mutate_fn=feat.mutate_aquila_4mode,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+rsa_mut", mutate_fn=feat.mutate_rsa_walk_swim,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+noa_cache_mut", mutate_fn=feat.mutate_noa_cache_recover,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+salp_chain_mut", mutate_fn=feat.mutate_salp_chain,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+levy_xover_hybrid_mut",
-        mutate_fn=feat.mutate_levy_crossover_hybrid,
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+oppositional_mut",
-        mutate_fn=feat.make_oppositional_mutate(),
-    ))
-    # Replacement
-    variants.append(FeatureConfig(
-        name="SGA+crowding_replace", replace_fn=feat.replace_crowding,
-    ))
-    # Parameter control
-    variants.append(FeatureConfig(
-        name="SGA+nlin_decay_mut",
-        mutate_fn=feat.make_nonlinear_decay_mutate(base_indpb=0.1, mode="cosine"),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+SHADE_mut", mutate_fn=feat.make_shade_de(),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+hho_phase_mut", mutate_fn=feat.make_hho_phase_switch(),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+rank_step_mut", mutate_fn=feat.mutate_rank_step,
-    ))
-    # Diversity / global search
-    variants.append(FeatureConfig(
-        name="SGA+chaotic_perturb_mut",
-        mutate_fn=feat.make_chaotic_perturbation(scale=0.05),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+fad_jump",
-        diversity_fn=feat.make_fad_jump(period=10, fraction=0.2),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+qpso_mut", mutate_fn=feat.mutate_quantum_qpso,
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+danger_signal",
-        mutate_fn=feat.make_danger_signal(stag_threshold=10, boost=5.0),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pso_velocity_mut",
-        mutate_fn=feat.make_pso_velocity_mutate(w=0.7, c1=1.5, c2=1.5),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+abc_employed_mut",
-        mutate_fn=feat.make_abc_mutate(phase="employed"),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+abc_onlooker_mut",
-        mutate_fn=feat.make_abc_mutate(phase="onlooker"),
-    ))
-    
-    variants.append(FeatureConfig(
-        name="SGA+abc_mixed_mut",
-        mutate_fn=feat.make_abc_mutate(phase="mixed"),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+pso_refine",
-        refine_fn=feat.make_sga_pso_refine(
-            top_k=5, n_iters=3, w=0.7, c1=1.5, c2=1.5,
-            every_n_gens=5,
-        ),
-    ))
-
-    variants.append(FeatureConfig(
-        name="SGA+metropolis_replace",
-        replace_fn=feat.make_metropolis_replace(
-            T0=1.0, T_end=1e-3, schedule="exp", elitism_k=1,
-        ),
-    ))
-
+def build_variants(baseline, encoding):
+    """Baseline + every variant in the registry that applies to this encoding."""
+    variants = [baseline]
+    for spec in variants_for_encoding(encoding):
+        variants.append(variant_from_baseline(baseline, spec))
     return variants
 
 
@@ -455,30 +139,30 @@ def main():
                              "Default: 5 (demo) / 30 (full).")
     args = parser.parse_args()
 
-    # Mode defaults; explicit flags override.
-    if args.full:
-        n_runs = 30
-        if args.suite == "engineering":
-            # Fixed-dim, low-D problems: literature-standard budget.
-            max_fes = 50_000
-        else:
-            max_fes = 200_000 if args.dim <= 10 else 1_000_000
-        pop_size = 50
-        mode = "FULL"
-    else:
-        n_runs = 5
-        max_fes = 5_000
-        pop_size = 30
-        mode = "DEMO"
+    # Always load the suite config; it is the single source of truth for
+    # the SGA spec. Demo mode (--no --full) overlays small budgets after.
+    suite_cfg = load_suite_config(args.suite)
+    if suite_cfg is None:
+        raise FileNotFoundError(
+            f"configs/{args.suite}.json not found. Each suite must have "
+            f"a config file under configs/."
+        )
 
-    if args.pop_size is not None:
-        pop_size = args.pop_size
-    if args.max_fes is not None:
-        max_fes = args.max_fes
-    if args.max_gen is not None:
-        max_fes = args.max_gen * pop_size
-    if args.n_runs is not None:
-        n_runs = args.n_runs
+    if not args.full:
+        # Demo overlays — keep existing operator spec from JSON, just shrink
+        # pop/FE/runs so the smoke run is fast.
+        suite_cfg["pop_size"] = 30
+        suite_cfg["max_fes"] = 5_000
+        suite_cfg["n_runs"] = 5
+        mode = "DEMO"
+    else:
+        mode = "FULL"
+
+    suite_cfg = apply_cli_overrides(suite_cfg, args)
+
+    pop_size = int(suite_cfg["pop_size"])
+    n_runs = int(suite_cfg["n_runs"])
+    max_fes = resolve_max_fes(suite_cfg, args.dim)
 
     print(f"Running {mode} protocol: D={args.dim}, pop={pop_size}, "
           f"MaxFES={max_fes} (~{max_fes // pop_size} gens), runs={n_runs}")
@@ -487,7 +171,14 @@ def main():
         print("(Use --full for the real CEC 2022 budget, or override with "
               "--pop-size / --max-fes / --max-gen / --n-runs.)")
 
-    variants = build_variants()
+    # Build the suite baseline from the resolved JSON, then derive every
+    # registry variant on top of it. Each variant inherits all unmodified
+    # operator/scalar params from the baseline.
+    encoding = suite_cfg.get("encoding", "real")
+    baseline = baseline_from_config(suite_cfg, dim=args.dim)
+    baseline.name = args.baseline  # match --baseline string for downstream stats
+    variants = build_variants(baseline, encoding)
+
     if args.variants:
         needles = [s.strip() for s in args.variants.split(",") if s.strip()]
         if args.exact:
@@ -512,6 +203,21 @@ def main():
               "pop_size": pop_size},
         variants=[v.name for v in variants],
         tag=args.tag,
+    )
+    # Audit trail: resolved suite config + per-variant diff vs baseline.
+    (recorder.exp_dir / "suite_config.json").write_text(
+        json.dumps(suite_cfg, indent=2, default=str)
+    )
+    name_to_spec = {s.name: s for s in VARIANTS}
+    diffs = []
+    for v in variants:
+        if v.name == args.baseline:
+            diffs.append({"name": v.name, "slots": [], "overrides": {},
+                          "encodings": [encoding]})
+        elif v.name in name_to_spec:
+            diffs.append(variant_diff(baseline, v, name_to_spec[v.name]))
+    (recorder.exp_dir / "variants_diff.json").write_text(
+        json.dumps(diffs, indent=2)
     )
 
     funcs_filter = (

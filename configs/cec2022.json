@@ -1,0 +1,13 @@
+{
+  "suite": "cec2022",
+  "encoding": "real",
+  "elitism": {"k": 1},
+  "pop_size": 100,
+  "max_fes": {"10": 200000, "20": 1000000},
+  "n_runs": 30,
+  "selection": {"kind": "tournament", "k": 3},
+  "crossover": {"kind": "sbx", "eta": 20, "pc": 0.9},
+  "mutation":  {"kind": "poly", "eta": 20, "pm_per_gene": "1/D"},
+  "stopping": "fe_budget",
+  "_stopping_note": "Halt when cumulative function evaluations reach max_fes (200k for D=10, 1M for D=20) per CEC 2022 protocol."
+}

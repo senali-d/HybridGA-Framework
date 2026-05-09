@@ -126,6 +126,117 @@ def default_replace(parents, offspring, ctx):
     return generational_elitism(parents, offspring, ctx["elitism_k"])
 
 
+# ===================== OPERATOR FACTORIES (config-driven) =====================
+#
+# Each factory accepts a `spec` dict (taken straight from a suite JSON) and
+# returns a closure with the SGA core's expected signature. The `kind` field
+# selects the implementation; remaining fields are operator parameters.
+#
+# Adding a new operator:
+#   1. Implement the closure inline (or import from `ga/features.py`).
+#   2. Add a branch under the relevant `make_*` factory.
+#   3. Reference its `kind` from a suite JSON. No other code changes needed.
+
+def _resolve_pm_per_gene(spec_value, dim):
+    """`pm_per_gene` may be the literal string '1/D', a float, or absent
+    (defaults to 1/D)."""
+    if spec_value is None or spec_value == "1/D":
+        return 1.0 / dim
+    return float(spec_value)
+
+
+def make_select(spec):
+    """Build a selection closure from a spec like {'kind':'tournament','k':2}."""
+    kind = spec.get("kind", "tournament")
+    if kind == "tournament":
+        k = int(spec.get("k", 3))
+        def _select(population, n, ctx):
+            return tools.selTournament(population, n, tournsize=k)
+        _select.__name__ = f"tournament_k{k}"
+        return _select
+    raise ValueError(f"unknown selection kind: {kind!r}")
+
+
+def make_crossover(spec):
+    """Build a crossover closure from a spec like
+    {'kind':'sbx','eta':20,'pc':0.9}.  `pc` is read by the core loop via
+    FeatureConfig.cx_prob, not the closure itself."""
+    kind = spec.get("kind", "sbx")
+    if kind == "sbx":
+        eta = float(spec.get("eta", 20.0))
+        def _cx(p1, p2, ctx):
+            c1, c2 = tools.cxSimulatedBinaryBounded(
+                list(p1), list(p2), eta=eta,
+                low=ctx["lb"].tolist(), up=ctx["ub"].tolist(),
+            )
+            return c1, c2
+        _cx.__name__ = f"sbx_eta{int(eta)}"
+        return _cx
+    if kind == "ox":
+        # Order Crossover for permutation encodings (TSP). Operates on
+        # Python lists treated as permutations of {0..len-1}.
+        def _cx(p1, p2, ctx):
+            c1, c2 = tools.cxOrdered(list(p1), list(p2))
+            return c1, c2
+        _cx.__name__ = "ox"
+        return _cx
+    raise ValueError(f"unknown crossover kind: {kind!r}")
+
+
+def make_mutation(spec, dim):
+    """Build a mutation closure. `dim` is needed to resolve `1/D` rates."""
+    kind = spec.get("kind", "poly")
+    if kind == "poly":
+        eta = float(spec.get("eta", 20.0))
+        indpb = _resolve_pm_per_gene(spec.get("pm_per_gene"), dim)
+        def _mut(ind, ctx):
+            mutated, = tools.mutPolynomialBounded(
+                list(ind), eta=eta,
+                low=ctx["lb"].tolist(), up=ctx["ub"].tolist(),
+                indpb=indpb,
+            )
+            return mutated
+        _mut.__name__ = f"poly_eta{int(eta)}_indpb{indpb:.4g}"
+        return _mut
+    if kind == "swap":
+        # Permutation swap-mutation: swap two random positions with prob `pm`.
+        pm = float(spec.get("pm", 1.0 / dim))
+        def _mut(ind, ctx):
+            seq = list(ind)
+            rng = ctx["rng"]
+            for i in range(len(seq)):
+                if rng.random() < pm:
+                    j = int(rng.integers(0, len(seq)))
+                    seq[i], seq[j] = seq[j], seq[i]
+            return seq
+        _mut.__name__ = f"swap_pm{pm:.4g}"
+        return _mut
+    if kind == "inversion":
+        pm = float(spec.get("pm", 1.0 / dim))
+        def _mut(ind, ctx):
+            seq = list(ind)
+            rng = ctx["rng"]
+            if rng.random() < pm:
+                i, j = sorted(rng.integers(0, len(seq), size=2).tolist())
+                seq[i:j+1] = seq[i:j+1][::-1]
+            return seq
+        _mut.__name__ = f"inversion_pm{pm:.4g}"
+        return _mut
+    raise ValueError(f"unknown mutation kind: {kind!r}")
+
+
+def make_replace(spec):
+    """Build a replacement closure from a spec like {'k':1}."""
+    k_default = int(spec.get("k", 1))
+    def _replace(parents, offspring, ctx):
+        # Honor ctx['elitism_k'] if set (FeatureConfig knob can override the
+        # spec at the variant level); fall back to spec-time k.
+        k = int(ctx.get("elitism_k", k_default))
+        return generational_elitism(parents, offspring, k)
+    _replace.__name__ = f"generational_elitism_k{k_default}"
+    return _replace
+
+
 # ===================== EVOLUTION LOOP =====================
 
 def clip_to_bounds(vec, lb, ub):

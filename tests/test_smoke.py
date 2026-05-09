@@ -17,12 +17,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import json  # noqa: E402
+
 from ga.core import run_sga  # noqa: E402
+from ga.build import baseline_from_config  # noqa: E402
 from opfunu.cec_based.cec2022 import F12022, F62022  # noqa: E402
 from run_experiments import build_variants  # noqa: E402
 
 
-VARIANTS = build_variants()
+with (ROOT / "configs" / "cec2022.json").open() as _f:
+    _CFG = json.load(_f)
+_BASELINE = baseline_from_config(_CFG, dim=10)
+_BASELINE.name = "SGA_baseline"
+VARIANTS = build_variants(_BASELINE, "real")
 DIM = 10  # CEC 2022 supports {2, 10, 20}
 POP = 12
 MAX_FES = 200
