@@ -184,6 +184,32 @@ def build_variants():
         name="SGA+gauss_cauchy_mut", mutate_fn=feat.make_gauss_cauchy_mix(),
     ))
     variants.append(FeatureConfig(
+        name="SGA+fast_ga_cauchy_mut",
+        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.1),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fast_ga_levy_mut",
+        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="levy", scale=0.1),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fast_ga_cauchy_small",
+        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.01),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fast_ga_levy_small",
+        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="levy", scale=0.01),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fast_ga_cauchy_anneal",
+        mutate_fn=feat.make_fast_ga_mutate(
+            beta=1.5, dist="cauchy", scale=0.1, scale_end=0.001),
+    ))
+    variants.append(FeatureConfig(
+        name="SGA+fast_ga_levy_anneal",
+        mutate_fn=feat.make_fast_ga_mutate(
+            beta=1.5, dist="levy", scale=0.1, scale_end=0.001),
+    ))
+    variants.append(FeatureConfig(
         name="SGA+t_gated_mut",
         mutate_fn=feat.make_t_ratio_gated([
             (0.5, feat.mutate_levy),

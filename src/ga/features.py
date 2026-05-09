@@ -2091,3 +2091,62 @@ def make_metropolis_replace(T0=1.0, T_end=1e-3, schedule="exp", elitism_k=1):
         return new_pop[: len(parents)]
 
     return replace_metropolis
+
+
+# ============================================================
+# F77 — Fast GA mutation (power-law α/n rate + heavy-tailed step)
+# Doerr, Le, Makhmara, Nguyen (2017) — "Fast Genetic Algorithms"
+# ============================================================
+def _sample_power_law_alpha(beta, n, rng):
+    """Draw alpha in {1, 2, ..., n/2} with P(alpha=k) ~ k^{-beta}.
+    Normalized over the truncated support, per Doerr et al."""
+    upper = max(1, n // 2)
+    ks = np.arange(1, upper + 1, dtype=float)
+    weights = ks ** (-beta)
+    weights /= weights.sum()
+    return int(rng.choice(ks, p=weights))
+
+
+def make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.1, scale_end=None):
+    """Fast-GA mutation: per call, draw alpha ~ power-law(beta) over {1..n/2},
+    set per-coordinate mutation rate p = alpha / n, and perturb each selected
+    coordinate by a heavy-tailed step (Cauchy or Lévy).
+
+    Args:
+        beta:      power-law exponent (Doerr et al. recommend 1.5).
+        dist:      "cauchy" or "levy" — distribution for the step magnitude.
+        scale:     initial step size as a fraction of (ub - lb).
+        scale_end: if not None, linearly anneal scale -> scale_end using
+                   ctx['t_ratio'] (0 at start, 1 at end of run).
+    """
+    dist = dist.lower()
+    if dist not in ("cauchy", "levy"):
+        raise ValueError(f"dist must be 'cauchy' or 'levy', got {dist!r}")
+
+    def mutate_fast_ga(ind, ctx):
+        rng = ctx["rng"]
+        dim = ctx["dim"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        x = _arr(ind)
+
+        alpha = _sample_power_law_alpha(beta, dim, rng)
+        p = alpha / dim
+        mask = rng.random(dim) < p
+        if not mask.any():
+            mask[rng.integers(0, dim)] = True
+
+        if dist == "cauchy":
+            step = rng.standard_cauchy(dim)
+        else:
+            step = _levy_step(dim, beta=1.5, rng=rng)
+
+        if scale_end is not None:
+            t = float(ctx.get("t_ratio", 0.0))
+            cur_scale = scale + (scale_end - scale) * t
+        else:
+            cur_scale = scale
+
+        delta = np.where(mask, step, 0.0) * cur_scale * (ub - lb)
+        return np.clip(x + delta, lb, ub).tolist()
+
+    return mutate_fast_ga
