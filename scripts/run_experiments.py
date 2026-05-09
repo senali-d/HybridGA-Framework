@@ -183,29 +183,19 @@ def build_variants():
     variants.append(FeatureConfig(
         name="SGA+gauss_cauchy_mut", mutate_fn=feat.make_gauss_cauchy_mix(),
     ))
+    # Canonical fast-GA: Levy step + scale=0.01 (best on F1/F8, ties baseline on F6).
     variants.append(FeatureConfig(
-        name="SGA+fast_ga_cauchy_mut",
-        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.1),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_levy_mut",
-        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="levy", scale=0.1),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_cauchy_small",
-        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.01),
-    ))
-    variants.append(FeatureConfig(
-        name="SGA+fast_ga_levy_small",
+        name="SGA+fast_ga_mut",
         mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="levy", scale=0.01),
     ))
+    # Ablation: Cauchy step variant.
     variants.append(FeatureConfig(
-        name="SGA+fast_ga_cauchy_anneal",
-        mutate_fn=feat.make_fast_ga_mutate(
-            beta=1.5, dist="cauchy", scale=0.1, scale_end=0.001),
+        name="SGA+fast_ga_cauchy_mut",
+        mutate_fn=feat.make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.01),
     ))
+    # Ablation: annealed scale (large early, small late) — wins on F8 composition.
     variants.append(FeatureConfig(
-        name="SGA+fast_ga_levy_anneal",
+        name="SGA+fast_ga_anneal_mut",
         mutate_fn=feat.make_fast_ga_mutate(
             beta=1.5, dist="levy", scale=0.1, scale_end=0.001),
     ))
