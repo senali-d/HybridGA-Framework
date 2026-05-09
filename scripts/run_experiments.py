@@ -374,6 +374,13 @@ def build_variants():
         ),
     ))
 
+    variants.append(FeatureConfig(
+        name="SGA+metropolis_replace",
+        replace_fn=feat.make_metropolis_replace(
+            T0=1.0, T_end=1e-3, schedule="exp", elitism_k=1,
+        ),
+    ))
+
     return variants
 
 

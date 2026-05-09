@@ -2024,3 +2024,70 @@ def make_sga_pso_refine(top_k=5, n_iters=3, w=0.7, c1=1.5, c2=1.5,
                 state[slot] = (v, pbest_x, pbest_f)
         return population
     return refine
+
+
+# ============================================================
+# F76 — Metropolis replacement with cooling schedule (SA-style)
+# ============================================================
+def make_metropolis_replace(T0=1.0, T_end=1e-3, schedule="exp", elitism_k=1):
+    """One-to-one replacement that *always* accepts a better offspring and
+    accepts a worse one with probability exp(-Δf / T(t)). Temperature T(t)
+    cools from T0 to T_end as ctx['t_ratio'] goes 0 → 1, mirroring SA's
+    explore-then-exploit transition. Combats premature convergence by
+    letting early generations climb out of basins.
+
+    schedule:
+      - "exp":    T = T0 * (T_end/T0) ** t_ratio   (geometric cooling)
+      - "linear": T = T0 + (T_end - T0) * t_ratio
+      - "cosine": T = T_end + 0.5*(T0-T_end)*(1+cos(pi*t_ratio))
+
+    Δf is normalized by max(|f_parent|, 1e-12) so the schedule is roughly
+    scale-invariant across benchmarks. Top-`elitism_k` parents are always
+    preserved unconditionally to guarantee monotone best-so-far.
+    """
+    if schedule not in ("exp", "linear", "cosine"):
+        raise ValueError(f"schedule must be exp/linear/cosine, got {schedule}")
+    if T0 <= 0 or T_end <= 0:
+        raise ValueError("T0 and T_end must be positive")
+
+    def _temperature(t):
+        t = min(max(t, 0.0), 1.0)
+        if schedule == "exp":
+            return T0 * (T_end / T0) ** t
+        if schedule == "linear":
+            return T0 + (T_end - T0) * t
+        # cosine
+        return T_end + 0.5 * (T0 - T_end) * (1.0 + math.cos(math.pi * t))
+
+    def replace_metropolis(parents, offspring, ctx):
+        rng = ctx["rng"]
+        T = _temperature(ctx.get("t_ratio", 0.0))
+
+        # Preserve top-k elites unconditionally.
+        k = max(0, min(elitism_k, len(parents)))
+        parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
+        elites = parents_sorted[:k]
+        elite_ids = {id(p) for p in elites}
+
+        new_pop = list(elites)
+        n = min(len(parents), len(offspring))
+        for i in range(n):
+            p, o = parents[i], offspring[i]
+            if id(p) in elite_ids:
+                continue  # already carried over as elite
+            f_p = p.fitness.values[0]
+            f_o = o.fitness.values[0]
+            if f_o <= f_p:
+                new_pop.append(o)
+            else:
+                delta = (f_o - f_p) / max(abs(f_p), 1e-12)
+                accept_prob = math.exp(-delta / T) if T > 0 else 0.0
+                new_pop.append(o if rng.random() < accept_prob else p)
+
+        # Carry over any unmatched extras (non-elite parents past index n)
+        for j in range(n, len(parents)):
+            if id(parents[j]) not in elite_ids:
+                new_pop.append(parents[j])
+        return new_pop[: len(parents)]
+
+    return replace_metropolis
