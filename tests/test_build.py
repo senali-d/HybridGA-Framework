@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from ga.build import (
-    Spec, baseline_from_config, variant_from_baseline, _OVERRIDABLE_SCALARS,
+    Spec, baseline_from_config, variant_from_baseline, variant_diff,
+    _OVERRIDABLE_SCALARS,
 )
 
 
@@ -103,3 +104,66 @@ def test_overridable_scalars_set_documented():
     assert "pop_size" in _OVERRIDABLE_SCALARS
     assert "elitism_k" in _OVERRIDABLE_SCALARS
     assert "name" not in _OVERRIDABLE_SCALARS
+
+
+def test_tsp_baseline_uses_permutation_operators():
+    cfg = _load("tsp")
+    b = baseline_from_config(cfg, dim=51)  # eil51
+    assert "k2" in b.select_fn.__name__
+    assert b.crossover_fn.__name__ == "ox"
+    assert "swap" in b.mutate_fn.__name__
+    assert b.cx_prob == 0.9
+    assert b.elitism_k == 1
+
+
+def test_timetabling_baseline_constructs():
+    """The day_exchange/move_event operator kinds aren't implemented yet,
+    so this asserts that the loader fails *with a clear message* rather
+    than silently producing wrong defaults."""
+    cfg = _load("timetabling")
+    with pytest.raises(ValueError, match="unknown crossover kind"):
+        baseline_from_config(cfg, dim=10)
+
+
+def test_variant_diff_reports_replacement_and_wrapper():
+    cfg = _load("engineering")
+    b = baseline_from_config(cfg, dim=4)
+    spec = Spec(
+        name="SGA+test",
+        mutate=lambda ind, ctx: list(ind),
+        select_wrapper=lambda base: base,
+        overrides={"pop_size": 30},
+    )
+    v = variant_from_baseline(b, spec)
+    diff = variant_diff(b, v, spec)
+    assert diff["name"] == "SGA+test"
+    assert "mutate" in diff["slots"]
+    assert "select (wrapped)" in diff["slots"]
+    assert diff["overrides"] == {"pop_size": 30}
+
+
+def test_runner_persists_audit_files(tmp_path):
+    """Runner-level smoke: a tiny --no-stats --no-plots --no-history run
+    must produce suite_config.json and variants_diff.json next to the
+    runs.parquet archive."""
+    import subprocess
+    repo = ROOT
+    out = subprocess.run(
+        [sys.executable, "scripts/run_experiments.py",
+         "--suite", "cec2022",
+         "--variants", "Levy_mut",
+         "--n-runs", "1",
+         "--out-root", str(tmp_path),
+         "--tag", "audit_smoke",
+         "--no-plots", "--no-stats", "--no-history"],
+        cwd=repo, capture_output=True, text=True,
+    )
+    assert out.returncode == 0, out.stderr
+    exp_dir = tmp_path / "audit_smoke"
+    assert (exp_dir / "suite_config.json").exists()
+    assert (exp_dir / "variants_diff.json").exists()
+    cfg = json.loads((exp_dir / "suite_config.json").read_text())
+    assert cfg["suite"] == "cec2022"
+    diffs = json.loads((exp_dir / "variants_diff.json").read_text())
+    names = [d["name"] for d in diffs]
+    assert "SGA_baseline" in names and "SGA+Levy_mut" in names

@@ -105,10 +105,12 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
         mutate_fn=make_mutation(mut_spec, dim=dim),
         replace_fn=make_replace(elt_spec),
         cx_prob=float(cx_spec.get("pc", 0.9)),
-        # Mühlenbein/DEAP convention: per-individual gate stays at 1.0;
-        # the per-gene rate is baked into the mutation closure.
-        mut_prob=1.0 if mut_spec.get("kind") == "poly"
-                 else float(mut_spec.get("pm_per_individual", 1.0)),
+        # Per-individual mutation gate. Operator semantics (per-gene poly
+        # rate, per-position swap rate, whole-vector inversion rate) live
+        # inside the mutation closure built by `make_mutation`. The gate
+        # therefore defaults to 1.0 and only diverges if the JSON sets
+        # `mutation.pm_per_individual` explicitly.
+        mut_prob=float(mut_spec.get("pm_per_individual", 1.0)),
         elitism_k=int(elt_spec.get("k", 1)),
     )
     return cfg
@@ -117,7 +119,10 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
 def variant_from_baseline(baseline: FeatureConfig, spec: Spec) -> FeatureConfig:
     """Clone `baseline`, swap declared operator slots, apply explicit
     overrides. Every parameter not touched stays bit-identical."""
-    # Shallow copy; operator slots are immutable closures, scalars are ints/floats.
+    # Shallow copy is safe: every FeatureConfig field is either a function
+    # reference (closures are not mutated post-construction) or an
+    # immutable scalar (int / float / str / bool). Adding a mutable field
+    # later (list/dict) will require switching to copy.deepcopy here.
     v = copy.copy(baseline)
     v.name = spec.name
 

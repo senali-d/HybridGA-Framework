@@ -122,7 +122,8 @@ def main():
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
     parser.add_argument("--suite", type=str, default="cec2022",
-                        choices=["cec2022", "separable", "engineering"],
+                        choices=["cec2022", "separable", "engineering",
+                                 "tsp", "timetabling"],
                         help="Benchmark suite. 'cec2022' (default), "
                              "'separable' (Sphere/Rastrigin/Schwefel/"
                              "SumOfDifferentPowers/Step, any dim), or "
@@ -163,6 +164,15 @@ def main():
     pop_size = int(suite_cfg["pop_size"])
     n_runs = int(suite_cfg["n_runs"])
     max_fes = resolve_max_fes(suite_cfg, args.dim)
+    if max_fes is None:
+        raise NotImplementedError(
+            f"suite {args.suite!r}: configs/{args.suite}.json has no "
+            f"`max_fes` field, and the runner only supports FE-budget "
+            f"stopping today. Either add `max_fes` to the config or "
+            f"pass --max-fes / --max-gen on the CLI. "
+            f"(See the config's `_stopping_note` for the intended "
+            f"stopping criterion.)"
+        )
 
     print(f"Running {mode} protocol: D={args.dim}, pop={pop_size}, "
           f"MaxFES={max_fes} (~{max_fes // pop_size} gens), runs={n_runs}")
@@ -225,11 +235,19 @@ def main():
         if args.functions else None
     )
 
-    protocol = {
+    protocols = {
         "cec2022": run_protocol,
         "separable": run_separable_protocol,
         "engineering": run_engineering_protocol,
-    }[args.suite]
+    }
+    if args.suite not in protocols:
+        raise NotImplementedError(
+            f"suite {args.suite!r}: config exists at "
+            f"configs/{args.suite}.json but the problem evaluators and "
+            f"`run_{args.suite}_protocol` are not yet wired into "
+            f"src/benchmarks/. (See the config's `_note` field.)"
+        )
+    protocol = protocols[args.suite]
     results = protocol(
         variants, dim=args.dim, n_runs=n_runs,
         max_fes=max_fes, pop_size=pop_size,

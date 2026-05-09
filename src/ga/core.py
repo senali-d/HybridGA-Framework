@@ -226,13 +226,17 @@ def make_mutation(spec, dim):
 
 
 def make_replace(spec):
-    """Build a replacement closure from a spec like {'k':1}."""
+    """Build a replacement closure from a spec like {'k':1}.
+
+    Note: the SGA core always populates `ctx['elitism_k']` from
+    `FeatureConfig.elitism_k`, so the spec's `k` is effectively the
+    *initial* value carried by the baseline FeatureConfig. A variant that
+    overrides `elitism_k` will be honored automatically because the
+    closure reads from `ctx`.
+    """
     k_default = int(spec.get("k", 1))
     def _replace(parents, offspring, ctx):
-        # Honor ctx['elitism_k'] if set (FeatureConfig knob can override the
-        # spec at the variant level); fall back to spec-time k.
-        k = int(ctx.get("elitism_k", k_default))
-        return generational_elitism(parents, offspring, k)
+        return generational_elitism(parents, offspring, int(ctx["elitism_k"]))
     _replace.__name__ = f"generational_elitism_k{k_default}"
     return _replace
 
