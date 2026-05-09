@@ -864,7 +864,9 @@ def mutate_aquila_4mode(ind, ctx):
     elif t < 0.75:
         new = (xb - xm) * 0.1 - rng.random() + ((ub - lb) * rng.random() + lb) * 0.1
     else:
-        QF = t ** ((2 * rng.random() - 1) / ((1 - t) ** 2 + 1e-9))
+        exponent = (2 * rng.random() - 1) / ((1 - t) ** 2 + 1e-9)
+        exponent = float(np.clip(exponent, -50.0, 50.0))
+        QF = t ** exponent
         new = QF * xb - (rng.random() * x * t) - rng.random() + rng.random()
     return np.clip(new, lb, ub).tolist()
 

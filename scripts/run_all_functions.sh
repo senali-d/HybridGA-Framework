@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 VARIANTS="lhs_init,OBL_init,chaotic_init,adaptive_tourney,clonal_expand,DE_mut,SHADE_mut,Levy_mut,CLONALG_hyper,gauss_cauchy_mut,adaptive_mut,encircling_mut,pher_guided_mut,multiparent_cx,pher_edge_cx,greedy_replace,archive_replace,crowding_replace,restart,immigrant"
 
-FUNCS=(F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12)
+FUNCS=(F10 F11 F12)
 
 for i in "${!FUNCS[@]}"; do
     fn="${FUNCS[$i]}"

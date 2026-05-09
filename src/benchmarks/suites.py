@@ -173,20 +173,38 @@ def _worker_run_one(payload):
     aren't picklable by the default pickler. We deserialize once per worker
     job; for spawn-based pools each future is a fresh job, so there is no
     cross-job caching of decoded variants.
+
+    Catches exceptions from `run_sga` and returns a sentinel result (error =
+    NaN, fes_used = 0, empty history) so a single buggy variant cannot tank
+    a full-suite screen. The traceback is captured in result["error_msg"].
     """
     variant_blob, suite_name, func_name, seed, kw = payload
     variant = cloudpickle.loads(variant_blob)
     FCls = _SUITES[suite_name][func_name]
     problem = FCls(ndim=kw["dim"])
     t_run = time.time()
-    r = run_sga(
-        problem=problem,
-        config=variant,
-        pop_size=kw["pop_size"],
-        max_fes=kw["max_fes"],
-        seed=seed,
-        record_history=kw["record_history"],
-    )
+    try:
+        r = run_sga(
+            problem=problem,
+            config=variant,
+            pop_size=kw["pop_size"],
+            max_fes=kw["max_fes"],
+            seed=seed,
+            record_history=kw["record_history"],
+        )
+    except Exception as e:
+        import traceback
+        r = {
+            "error": float("nan"),
+            "best_fitness": float("nan"),
+            "fes_used": 0,
+            "history": [],
+            "error_msg": (
+                f"{variant.name} on {func_name} seed={seed} crashed: "
+                f"{type(e).__name__}: {e}\n"
+                + traceback.format_exc()
+            ),
+        }
     return variant.name, func_name, seed, r, time.time() - t_run
 
 
@@ -258,6 +276,8 @@ def _run_protocol(suite_name, funcs_registry, dim_supported_map,
             for fut in as_completed(futures):
                 vname, fn, seed, r, runtime_s = fut.result()
                 err_by_seed[vname][fn][seed] = r["error"]
+                if r.get("error_msg"):
+                    print(f"  [WARN] {r['error_msg'].splitlines()[0]}")
                 if recorder is not None:
                     recorder.add_run(vname, fn, seed, r, runtime_s)
                 done += 1
