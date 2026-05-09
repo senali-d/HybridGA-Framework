@@ -34,3 +34,6 @@ dist/
 
 # Experiment outputs
 results/
+
+# Benchmark data fetched at runtime (run scripts/fetch_tsplib.py to populate)
+data/tsplib/

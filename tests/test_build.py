@@ -114,6 +114,9 @@ def test_tsp_baseline_uses_permutation_operators():
     assert "swap" in b.mutate_fn.__name__
     assert b.cx_prob == 0.9
     assert b.elitism_k == 1
+    assert b.bound_handling == "passthrough"
+    assert b.init_fn is not None
+    assert b.init_fn.__name__ == "random_permutation"
 
 
 def test_timetabling_baseline_constructs():

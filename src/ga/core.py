@@ -72,10 +72,10 @@ class FeatureConfig:
         self.n_islands = n_islands
         self.migration_interval = migration_interval
         self.archive_size = archive_size
-        if bound_handling not in ("clip", "reflect", "reinit"):
+        if bound_handling not in ("clip", "reflect", "reinit", "passthrough"):
             raise ValueError(
-                f"bound_handling must be 'clip', 'reflect', or 'reinit'; "
-                f"got {bound_handling!r}"
+                f"bound_handling must be 'clip', 'reflect', 'reinit', or "
+                f"'passthrough'; got {bound_handling!r}"
             )
         self.bound_handling = bound_handling
 
@@ -143,6 +143,27 @@ def _resolve_pm_per_gene(spec_value, dim):
     if spec_value is None or spec_value == "1/D":
         return 1.0 / dim
     return float(spec_value)
+
+
+def make_init(spec):
+    """Build an initialization closure from a spec.
+
+    Defaults to uniform real-valued init when spec is None or
+    `kind == "uniform"`; `kind == "random_permutation"` produces random
+    permutations of {0..dim-1} for combinatorial encodings (TSP).
+    """
+    if spec is None:
+        return None  # let the SGA core fall back to default_init
+    kind = spec.get("kind", "uniform")
+    if kind == "uniform":
+        return None
+    if kind == "random_permutation":
+        def _init(n, dim, lb, ub, ctx):
+            rng = ctx["rng"]
+            return [list(rng.permutation(dim)) for _ in range(n)]
+        _init.__name__ = "random_permutation"
+        return _init
+    raise ValueError(f"unknown init kind: {kind!r}")
 
 
 def make_select(spec):
@@ -276,6 +297,14 @@ def apply_bounds(vec, lb, ub, mode="clip", rng=None):
         fresh = rng.uniform(lb, ub)
         out = np.where(oob, fresh, arr)
         return out.tolist()
+    if mode == "passthrough":
+        # No-op for non-real encodings (permutations, discrete assignments)
+        # where lb/ub have no meaningful clip/reflect interpretation.
+        # Returns a list (possibly of ints) so downstream code never sees
+        # numpy scalar types.
+        if isinstance(vec, np.ndarray):
+            return vec.tolist()
+        return list(vec)
     raise ValueError(f"unknown bound_handling mode: {mode!r}")
 
 

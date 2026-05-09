@@ -11,7 +11,8 @@ Three benchmark categories are supported:
 |---|---|---|---|---|
 | `cec2022` | Boundary-constrained black-box (CEC 2022 single-objective) | F1–F12 | {2, 10, 20} | Default; competition protocol |
 | `separable` | Classical separable scalable functions | Sphere, Rastrigin, Schwefel, SumOfDifferentPowers, Step | any | For diagnostics / unit-feature isolation |
-| `engineering` | Real-world *constrained* mechanical-design problems | TensionCompressionSpring, PressureVessel, WeldedBeam, SpeedReducer | fixed (3–7) | Mixed-integer; Deb feasibility-rule encoding into scalar fitness |
+| `engineering` | Real-world *constrained* mechanical-design problems | TensionCompressionSpring, PressureVessel, WeldedBeam, ThreeBarTruss, IBeam, Cantilever, SpeedReducer | fixed (2–7) | Mixed-integer; Deb feasibility-rule encoding into scalar fitness |
+| `tsp` | Travelling Salesman Problem (TSPLIB EUC_2D) | eil51, berlin52, kroA100, ch150, kroA200 | per instance (51–200) | Permutation encoding; OX crossover, swap/inversion mutation |
 
 ## Project layout
 
@@ -90,21 +91,94 @@ best solution of a run is feasible, compare `best_fitness < F_OFFSET`.
 Discrete variables (vessel thicknesses snap to 0.0625″ multiples; reducer
 teeth count is integer) are canonicalized inside `evaluate()`.
 
-Default budget under `--full` for the engineering suite is **50,000 FEs/run**
+Default budget under `--full` for the engineering suite is **30,000 FEs/run**
 (low-D problems; literature-standard).
+
+### TSP suite (TSPLIB)
+
+Permutation-encoded Travelling Salesman Problem on five canonical TSPLIB
+EUC_2D instances. The SGA uses **random-permutation init**, **Order
+Crossover (OX)**, and **swap mutation** (with inversion as an alternative,
+configured in `configs/tsp.json`). Fitness is the closed-tour length under
+TSPLIB's nearest-integer Euclidean distance convention.
+
+| Instance | Cities | Known optimum |
+|---|---|---|
+| eil51    |  51 | 426    |
+| berlin52 |  52 | 7,542  |
+| kroA100  | 100 | 21,282 |
+| ch150    | 150 | 6,528  |
+| kroA200  | 200 | 29,368 |
+
+#### One-time setup: fetch TSPLIB instances
+
+The `.tsp` files are not bundled. Run the fetcher once after install:
+
+```bash
+python scripts/fetch_tsplib.py
+```
+
+This downloads the five instances into `data/tsplib/` from a public
+TSPLIB mirror (with the official Heidelberg archive as a fallback).
+Re-running is safe — existing files are skipped unless you pass `--force`.
+Set `TSPLIB_DIR` to point at an existing TSPLIB copy if you already have
+one locally.
+
+#### Running the TSP suite
+
+```bash
+# Smoke (small budget): all 5 instances, 1 seed each
+python scripts/run_experiments.py --suite tsp
+
+# Full protocol: 5 instances × 30 runs × 50,000 FEs each
+python scripts/run_experiments.py --full --suite tsp
+
+# Subset of instances (comma-separated)
+python scripts/run_experiments.py --full --suite tsp --functions eil51,berlin52
+
+# Single instance, single seed, custom budget
+python scripts/run_experiments.py --suite tsp --functions kroA100 \
+    --n-runs 1 --max-fes 100000 --no-history
+
+# Parallel across (instance, seed) tuples
+python scripts/run_experiments.py --full --suite tsp --workers 8
+```
+
+Each instance has a fixed dimensionality baked into its `.tsp` file, so
+`--dim` is ignored when `--suite tsp` (same convention as the engineering
+suite). The full-protocol budget (`pop_size=100`, `max_fes=50,000`,
+`n_runs=30`, tournament k=2, OX pc=0.9, swap pm=0.02, elitism=1) is read
+from `configs/tsp.json`; CLI flags still override individual fields.
+
+#### TSP variants
+
+The variant registry in `src/ga/variants.py` is currently real-coded only,
+so when running `--suite tsp` only the baseline executes. Permutation-
+specific variants (e.g. 2-opt local search refinement, edge-recombination
+crossover, inversion mutation as a swap alternative) can be added by
+tagging the `Spec` with `encodings=("permutation",)`:
+
+```python
+Spec("SGA+inversion_mut",
+     encodings=("permutation",),
+     mutate=...),  # operator returning a permutation
+```
+
+The runner filters variants by encoding automatically — real-coded
+variants are skipped on TSP without warning.
 
 ### Protocol flags
 
 | Flag | Default (demo / full) | Notes |
 |---|---|---|
-| `--suite` | `cec2022` | One of `cec2022`, `separable`, `engineering` |
+| `--suite` | `cec2022` | One of `cec2022`, `separable`, `engineering`, `tsp` |
 | `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored for `engineering` |
 | `--pop-size` | 30 / 50 | Population size |
 | `--max-fes` | 5000 / 200k (D≤10) or 1M (D>10) | FE budget per run |
 | `--max-gen` | — | Cap by generations instead; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
 | `--variants` | (all) | Comma-separated substring filter, e.g. `pher,levy` |
-| `--functions` | (all in suite) | Comma-separated function names, e.g. `F1,F3,F7` (cec2022), `Sphere,Step` (separable), `WeldedBeam` (engineering) |
+| `--functions` | (all in suite) | Comma-separated function names, e.g. `F1,F3,F7` (cec2022), `Sphere,Step` (separable), `WeldedBeam` (engineering), `eil51,kroA100` (tsp) |
 | `--workers` | 1 | Process-pool size; results are seed-deterministic |
 | `--no-history` / `--no-plots` / `--no-stats` | off | Skip outputs |
 | `--tag` | timestamp | Override archive folder name |

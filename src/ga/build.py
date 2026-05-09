@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 
 from ga.core import (
     FeatureConfig,
-    make_select, make_crossover, make_mutation, make_replace,
+    make_init, make_select, make_crossover, make_mutation, make_replace,
 )
 
 
@@ -93,17 +93,20 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
         (per-individual gate; intensity lives in mutation.pm_per_gene),
         `elitism_k` from elitism.k.
     """
-    sel_spec = suite_cfg.get("selection", {"kind": "tournament", "k": 3})
-    cx_spec  = suite_cfg.get("crossover", {"kind": "sbx", "eta": 20, "pc": 0.9})
-    mut_spec = suite_cfg.get("mutation",  {"kind": "poly", "eta": 20})
-    elt_spec = suite_cfg.get("elitism",   {"k": 1})
+    init_spec = suite_cfg.get("init")  # may be None → core uses default uniform
+    sel_spec  = suite_cfg.get("selection", {"kind": "tournament", "k": 3})
+    cx_spec   = suite_cfg.get("crossover", {"kind": "sbx", "eta": 20, "pc": 0.9})
+    mut_spec  = suite_cfg.get("mutation",  {"kind": "poly", "eta": 20})
+    elt_spec  = suite_cfg.get("elitism",   {"k": 1})
 
     cfg = FeatureConfig(
         name=f"SGA_baseline_{suite_cfg.get('suite', 'unknown')}",
+        init_fn=make_init(init_spec),
         select_fn=make_select(sel_spec),
         crossover_fn=make_crossover(cx_spec),
         mutate_fn=make_mutation(mut_spec, dim=dim),
         replace_fn=make_replace(elt_spec),
+        bound_handling=suite_cfg.get("bound_handling", "clip"),
         cx_prob=float(cx_spec.get("pc", 0.9)),
         # Per-individual mutation gate. Operator semantics (per-gene poly
         # rate, per-position swap rate, whole-vector inversion rate) live

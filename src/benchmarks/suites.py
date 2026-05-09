@@ -30,6 +30,7 @@ from pymoo.problems.single import Schwefel as _PymooSchwefel
 
 from ga.core import run_sga
 from benchmarks.engineering import ENGINEERING_FUNCS
+from benchmarks.tsp import TSPLIB_FUNCS
 
 
 # ============================================================================
@@ -163,6 +164,7 @@ _SUITES = {
     "cec2022": dict(CEC2022_FUNCS),
     "separable": dict(SEPARABLE_FUNCS),
     "engineering": dict(ENGINEERING_FUNCS),
+    "tsp": dict(TSPLIB_FUNCS),
 }
 
 
@@ -336,6 +338,24 @@ def run_separable_protocol(variants, dim=10, n_runs=30, max_fes=None,
         funcs_registry=SEPARABLE_FUNCS,
         dim_supported_map=None,
         variants=variants, dim=dim, n_runs=n_runs, max_fes=max_fes,
+        pop_size=pop_size, recorder=recorder, record_history=record_history,
+        workers=workers, functions=functions,
+    )
+
+
+def run_tsp_protocol(variants, dim=None, n_runs=30, max_fes=None,
+                     pop_size=100, recorder=None, record_history=True,
+                     workers=1, functions=None):
+    """Run protocol for TSPLIB EUC_2D instances. Each instance has a fixed
+    city count baked into its `.tsp` file, so the `dim` argument is
+    accepted for interface compatibility but ignored by the constructors.
+    """
+    return _run_protocol(
+        suite_name="tsp",
+        funcs_registry=TSPLIB_FUNCS,
+        dim_supported_map=None,
+        variants=variants, dim=(dim if dim is not None else 0),
+        n_runs=n_runs, max_fes=max_fes,
         pop_size=pop_size, recorder=recorder, record_history=record_history,
         workers=workers, functions=functions,
     )

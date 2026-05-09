@@ -1,15 +1,18 @@
 {
   "suite": "tsp",
   "encoding": "permutation",
+  "bound_handling": "passthrough",
   "pop_size": 100,
+  "max_fes": 50000,
   "max_generations": 500,
   "n_runs": 30,
+  "init":      {"kind": "random_permutation"},
   "selection": {"kind": "tournament", "k": 2},
   "crossover": {"kind": "ox", "pc": 0.9},
   "mutation":  {"kind": "swap", "pm": 0.02, "alt": "inversion"},
   "elitism": {"k": 1},
-  "stopping": "max_generations_or_fe_budget",
-  "_stopping_note": "Halt at 500 generations OR when the equivalent FE budget (max_generations * pop_size = 50,000) is exhausted, whichever comes first.",
+  "stopping": "fe_budget",
+  "_stopping_note": "Halt at 500 generations × pop_size = 50,000 cumulative function evaluations. The runner currently supports FE-budget stopping only; max_generations is recorded for documentation.",
   "instances": ["eil51", "berlin52", "kroA100", "ch150", "kroA200"],
-  "_note": "TSPLIB problem evaluators are not yet wired into src/benchmarks. The runner will warn and skip until they are added."
+  "_note": "Run scripts/fetch_tsplib.py once to populate data/tsplib/ before --suite tsp."
 }
