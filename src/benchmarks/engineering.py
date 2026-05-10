@@ -77,6 +77,9 @@ class TensionCompressionSpring(EngineeringProblem):
     NDIM = 3
     LB = [0.05, 0.25, 2.00]
     UB = [2.00, 1.30, 15.0]
+    # F_GLOBAL recomputed on the CEC2020-RW formula (DE, this repo).
+    # CEC formula identical to textbook (Belegundu 1982; Arora 1989; Coello 2000),
+    # so the value matches the widely-cited literature optimum 0.012665.
     F_GLOBAL = 0.012665232788
     F_OFFSET = 100.0
 
@@ -109,6 +112,10 @@ class PressureVessel(EngineeringProblem):
     NDIM = 4
     LB = [0.51, 0.51, 10.0, 10.0]
     UB = [99.49, 99.49, 200.0, 200.0]
+    # F_GLOBAL recomputed on the CEC2020-RW formula (DE, this repo) at
+    # x* = (n_Ts=13, n_Th=7, R=42.0984, L=176.6366). CEC formula identical
+    # to textbook (Kannan & Kramer 1994; Coello 2000), so the value matches
+    # the widely-cited literature optimum 6059.7143.
     F_GLOBAL = 6059.714335048436
     # Upper bound for feasible f: evaluate objective at the (snapped)
     # corner Ts = Th = 99·0.0625 = 6.1875, R = L = 200, then add margin.
@@ -153,9 +160,11 @@ class WeldedBeam(EngineeringProblem):
     NDIM = 4
     LB = [0.125, 0.1, 0.1, 0.1]
     UB = [2.0, 10.0, 10.0, 2.0]
-    # CEC2020's modified δ = 6PL³/(E·t²·b) (vs. textbook 4PL³/(E·t³·b))
-    # shifts the optimum below the canonical 1.72485 textbook value.
-    # Recomputed by differential evolution on the CEC formulation.
+    # F_GLOBAL recomputed on the CEC2020-RW formula (DE, this repo) at
+    # x* ≈ (h=0.1988, l=3.3374, t=9.1920, b=0.1988).
+    # CEC2020 uses δ = 6PL³/(E·t²·b) and Pc ∝ sqrt(t²·b⁶/30), differing
+    # from the Ragsdell & Phillips (1976) / Coello (2000) textbook form
+    # (textbook f* = 1.724852 with δ = 4PL³/(E·t³·b) and 7 constraints).
     F_GLOBAL = 1.670217694
     F_OFFSET = 1.0e4
 
@@ -207,6 +216,9 @@ class ThreeBarTruss(EngineeringProblem):
     NDIM = 2
     LB = [0.0, 0.0]
     UB = [1.0, 1.0]
+    # F_GLOBAL recomputed on the CEC2020-RW formula (DE, this repo) at
+    # x* ≈ (A1=0.78867, A2=0.40825). CEC formula identical to textbook
+    # (Nowacki 1980; Ray & Saini 2001), value matches literature 263.8958.
     F_GLOBAL = 263.8958433764628
     F_OFFSET = 1.0e3
 
@@ -237,8 +249,11 @@ class SpeedReducer(EngineeringProblem):
     NDIM = 7
     LB = [2.6, 0.7, 17.0, 7.3, 7.3, 2.9, 5.0]
     UB = [3.6, 0.8, 28.0, 8.3, 8.3, 3.9, 5.5]
-    # Recomputed for the CEC formulation (16.91e6 vs textbook 16.9e6 in g5
-    # shifts the active boundary). Matches textbook Golinski value to 3 dp.
+    # F_GLOBAL recomputed on the CEC2020-RW formula (DE, this repo) at
+    # x* ≈ (b=3.5, m=0.7, z=17, l1=7.3, l2=7.71532, d1=3.35054, d2=5.28665).
+    # CEC2020 uses 16.91e6 (g5) and 7.477 (objective); the Golinski (1973)
+    # textbook form uses 16.9e6 and 7.4777, giving f* = 2994.471066. The
+    # CEC value differs by ~5e-2 because of the shifted g5 active boundary.
     F_GLOBAL = 2994.424466
     F_OFFSET = 1.0e6
 
