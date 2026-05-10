@@ -121,6 +121,30 @@ def runs_parquet_to_results(runs_df: pd.DataFrame) -> dict:
     return out
 
 
+def _sanitize_results(results: dict) -> tuple[dict, list[str]]:
+    """Replace NaN seed-errors (from crashed worker jobs — see
+    `_worker_run_one` in benchmarks/suites.py) with +inf so they sort to
+    "worst" deterministically in Friedman/Wilcoxon rather than silently
+    corrupting other variants' ranks. Variants whose every (function, seed)
+    crashed are dropped and their names returned for the caller to log."""
+    cleaned: dict = {}
+    dropped: list[str] = []
+    for v, per_fn in results.items():
+        any_finite = False
+        new_per_fn = {}
+        for fn, errs in per_fn.items():
+            arr = np.asarray(errs, dtype=float)
+            if np.isfinite(arr).any():
+                any_finite = True
+            arr = np.where(np.isfinite(arr), arr, np.inf)
+            new_per_fn[fn] = arr.tolist()
+        if any_finite:
+            cleaned[v] = new_per_fn
+        else:
+            dropped.append(v)
+    return cleaned, dropped
+
+
 def compute_ranking(results: dict, baseline_name: str,
                     runs_df: pd.DataFrame | None = None) -> pd.DataFrame:
     """Return a DataFrame with one row per variant, sorted best -> worst.
@@ -129,6 +153,15 @@ def compute_ranking(results: dict, baseline_name: str,
              median_runtime_s, mean_error_geomean.
     Sort: friedman_rank ASC, then wilcoxon_wins DESC, then runtime ASC.
     """
+    results, dropped = _sanitize_results(results)
+    for v in dropped:
+        print(f"  [WARN] {v}: all runs crashed; dropped from ranking.")
+    if not results:
+        return pd.DataFrame(columns=[
+            "variant", "friedman_rank", "wilcoxon_wins", "wilcoxon_losses",
+            "median_runtime_s", "mean_error_geomean",
+        ])
+
     _, _, ranks_df, _, variants, _ = friedman_with_ranks(results)
     ranks_map = dict(zip(ranks_df["variant"], ranks_df["mean_rank"]))
 
@@ -146,7 +179,12 @@ def compute_ranking(results: dict, baseline_name: str,
     else:
         rt = {}
 
-    func_names = list(next(iter(results.values())).keys())
+    # Intersect function sets across variants so ragged result dicts (e.g.
+    # a variant that crashed on every seed of one function and was dropped
+    # there) don't produce mismatched per-function arrays.
+    func_sets = [set(results[v].keys()) for v in variants]
+    func_names = sorted(set.intersection(*func_sets)) if func_sets else []
+
     rows = []
     for v in variants:
         # Floor at 1e-8 (CEC convention: error below this counts as a solve).
@@ -156,7 +194,10 @@ def compute_ranking(results: dict, baseline_name: str,
         per_func_means = np.array(
             [max(np.mean(results[v][fn]), 1e-8) for fn in func_names]
         )
-        geomean = float(np.exp(np.log(per_func_means).mean()))
+        if per_func_means.size and np.isfinite(per_func_means).all():
+            geomean = float(np.exp(np.log(per_func_means).mean()))
+        else:
+            geomean = float("inf")
         rows.append({
             "variant": v,
             "friedman_rank": float(ranks_map.get(v, np.nan)),
