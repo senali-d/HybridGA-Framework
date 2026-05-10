@@ -1,53 +1,49 @@
 """
-Classic constrained mechanical-engineering design problems used widely as
-metaheuristic benchmarks (Coello, Arora, Deb references):
+Mechanical-engineering design problems from the CEC 2020 Real-World
+Constrained Optimization suite (Kumar, Wu, Ali, Mallipeddi, Suganthan, Das
+2020), ported verbatim from the reference MATLAB implementation in
+P-N-Suganthan/2020-RW-Constrained-Optimisation (Software/CEC2020/cec20_func.m).
 
-    - TensionCompressionSpring   (3 vars, 4 inequality constraints)
-    - PressureVessel             (4 vars, 4 inequality constraints, mixed-integer)
-    - WeldedBeam                 (4 vars, 7 inequality constraints)
-    - SpeedReducer               (7 vars, 11 inequality constraints, mixed-integer)
+    - TensionCompressionSpring  (prob_k=17, RC-spring case 1)   3 vars, 4 g
+    - PressureVessel            (prob_k=18)                      4 vars, 4 g
+    - WeldedBeam                (prob_k=19)                      4 vars, 5 g
+    - ThreeBarTruss             (prob_k=20)                      2 vars, 3 g
+    - SpeedReducer              (prob_k=15)                      7 vars, 11 g
+
+I-Beam and the 5-segment Cantilever are NOT part of CEC2020-RW and are
+omitted from this suite. Bounds, objective scaling, and constraint forms
+match the MATLAB source exactly (including its non-textbook quirks, e.g.,
+WB uses `Pc ∝ sqrt(t² b⁶/30)` and `delta = 6PL³/(E t² b)`, SR uses 7.477
+not 7.4777, and SR's x5 lower bound is 7.3).
 
 Constraint handling
 -------------------
-Deb's feasibility rules, encoded into a *scalar* fitness so that every
-existing selection / replacement / mutation operator in the framework
-compares solutions correctly with no awareness of constraints:
+Deb's feasibility rules encoded into a *scalar* fitness:
 
     feasible   →  evaluate(x) = f(x)             (always < F_OFFSET)
     infeasible →  evaluate(x) = F_OFFSET + Σ max(0, g_i(x))
 
-Because `F_OFFSET` is chosen larger than any plausible feasible f for the
-problem, the resulting scalar ordering is *lex-equivalent* to Deb's pair
-comparison rule (any feasible beats any infeasible; feasibles ranked by f;
-infeasibles ranked by total constraint violation). No changes to
-`ga/core.py` or any feature operator are required.
-
-Discrete variables (Pressure Vessel thicknesses snap to 0.0625" multiples;
-Speed Reducer teeth count is integer) are handled inside `evaluate()` via
-`_canonicalize(x)`. The GA continues to see continuous box-bounded vars.
-
-Convention: `best_fitness < F_OFFSET`  iff  the best solution is feasible.
+F_OFFSET is chosen larger than any plausible feasible f for each problem so
+the scalar ordering is lex-equivalent to Deb's rule. No changes to ga/core
+or feature operators are required. Discrete encoding for PressureVessel
+(thicknesses are round(x)·0.0625) is applied inside `_canonicalize(x)`.
 """
 
 import numpy as np
 
 
 class EngineeringProblem:
-    """Base class. Subclasses set NDIM/LB/UB/F_GLOBAL/F_OFFSET as class
-    attrs and implement `_objective(x)` and `constraints(x)`. Optional
-    `_canonicalize(x)` snaps discrete variables before objective and
-    constraint evaluation."""
+    """Base class. Subclasses set NDIM/LB/UB/F_GLOBAL/F_OFFSET and implement
+    `_objective(x)` and `constraints(x)`. Optional `_canonicalize(x)` snaps
+    discrete variables before objective and constraint evaluation."""
 
     NDIM = None
-    LB = None        # array-like, shape (NDIM,)
-    UB = None        # array-like, shape (NDIM,)
-    F_GLOBAL = 0.0   # known literature optimum (feasible)
-    F_OFFSET = 1.0e6  # > any plausible feasible f
+    LB = None
+    UB = None
+    F_GLOBAL = 0.0
+    F_OFFSET = 1.0e6
 
     def __init__(self, ndim=None):
-        # The shared run-protocol passes ndim=kw["dim"]; we ignore the
-        # incoming value because engineering problems have a fixed
-        # dimensionality. Stored as a public attr so the GA core sees it.
         self.ndim = int(self.NDIM)
         self.lb = np.asarray(self.LB, dtype=float)
         self.ub = np.asarray(self.UB, dtype=float)
@@ -73,23 +69,20 @@ class EngineeringProblem:
 
 
 # ============================================================================
-# Tension / Compression Spring
-# ----------------------------------------------------------------------------
-# Variables: x = [d (wire diameter), D (mean coil diameter), N (active coils)]
-# Minimize:  f = (N + 2) * D * d^2
-# Subject to four inequality constraints (Belegundu 1982; Arora 1989).
+# CEC2020-RW prob_k = 17 : Tension/Compression Spring (case 1)
+# Variables x = [d (wire dia.), D (mean coil dia.), N (active coils)]
 # ============================================================================
 
 class TensionCompressionSpring(EngineeringProblem):
     NDIM = 3
-    LB = [0.05, 0.25, 2.0]
+    LB = [0.05, 0.25, 2.00]
     UB = [2.00, 1.30, 15.0]
     F_GLOBAL = 0.012665232788
     F_OFFSET = 100.0
 
     def _objective(self, x):
         d, D, N = x
-        return (N + 2.0) * D * d * d
+        return d * d * D * (N + 2.0)
 
     def constraints(self, x):
         d, D, N = x
@@ -97,53 +90,39 @@ class TensionCompressionSpring(EngineeringProblem):
 
         denom = 12566.0 * (D * d ** 3 - d ** 4)
         if abs(denom) <= 1.0e-12:
-            # The literature form of g2 is singular when D == d.
-            # Treat singular / near-singular points as strongly infeasible
-            # with a large but finite violation so evaluate() stays finite.
-            # Magnitude is well above any non-singular feasible/infeasible g2
-            # but small enough not to dominate Σ violations elsewhere.
             g2 = 1.0e6
         else:
             g2 = (4.0 * D * D - d * D) / denom + 1.0 / (5108.0 * d * d) - 1.0
 
-        g3 = 1.0 - (140.45 * d) / (D * D * N)
-        g4 = (D + d) / 1.5 - 1.0
+        g3 = 1.0 - 140.45 * d / (D * D * N)
+        g4 = (d + D) / 1.5 - 1.0
         return np.array([g1, g2, g3, g4])
 
 
 # ============================================================================
-# Pressure Vessel
-# ----------------------------------------------------------------------------
-# Variables: x = [Ts (shell thickness), Th (head thickness), R (radius), L (length)]
-# Ts, Th must be positive integer multiples of 0.0625 inches.
-# Minimize:  f = 0.6224 Ts R L + 1.7781 Th R^2
-#               + 3.1661 Ts^2 L + 19.84 Ts^2 R
-# Subject to four inequality constraints (Kannan & Kramer 1994).
+# CEC2020-RW prob_k = 18 : Pressure Vessel
+# Variables: x = [n_Ts, n_Th, R, L] with n_Ts, n_Th ∈ [0.51, 99.49] rounded
+# to integers and multiplied by 0.0625 to get Ts, Th in inches.
 # ============================================================================
 
 class PressureVessel(EngineeringProblem):
     NDIM = 4
-    LB = [0.0625, 0.0625, 10.0, 10.0]
-    # Ts, Th canonical Kannan & Kramer range: 1..99 multiples of 0.0625"
-    # (i.e., 0.0625..6.1875). R, L per the standard literature box.
-    UB = [6.1875, 6.1875, 200.0, 200.0]
+    LB = [0.51, 0.51, 10.0, 10.0]
+    UB = [99.49, 99.49, 200.0, 200.0]
     F_GLOBAL = 6059.714335048436
-    # Deb-style scalar encoding requires all feasible objectives to remain
-    # strictly below F_OFFSET. Use a conservative bound from the box upper
-    # limits (the objective is increasing in Ts, Th, R, and L on this domain)
-    # and add a small margin to preserve strict inequality.
+    # Upper bound for feasible f: evaluate objective at the (snapped)
+    # corner Ts = Th = 99·0.0625 = 6.1875, R = L = 200, then add margin.
     F_OFFSET = 1.01 * (
-        0.6224 * UB[0] * UB[2] * UB[3]
-        + 1.7781 * UB[1] * UB[2] * UB[2]
-        + 3.1661 * UB[0] * UB[0] * UB[3]
-        + 19.84 * UB[0] * UB[0] * UB[2]
+        0.6224 * (99 * 0.0625) * 200.0 * 200.0
+        + 1.7781 * (99 * 0.0625) * 200.0 * 200.0
+        + 3.1661 * (99 * 0.0625) ** 2 * 200.0
+        + 19.84 * (99 * 0.0625) ** 2 * 200.0
     )
 
     def _canonicalize(self, x):
         x = np.array(x, dtype=float)
-        # Ts (x[0]) and Th (x[1]) snap to nearest 0.0625" multiple, >= 0.0625
-        x[0] = max(round(x[0] / 0.0625) * 0.0625, 0.0625)
-        x[1] = max(round(x[1] / 0.0625) * 0.0625, 0.0625)
+        x[0] = 0.0625 * round(x[0])
+        x[1] = 0.0625 * round(x[1])
         return x
 
     def _objective(self, x):
@@ -163,224 +142,125 @@ class PressureVessel(EngineeringProblem):
 
 
 # ============================================================================
-# Welded Beam
-# ----------------------------------------------------------------------------
-# Variables: x = [h (weld thickness), l (weld length),
-#                 t (beam height),    b (beam width)]
-# Minimize:  f = 1.10471 h^2 l + 0.04811 t b (14.0 + l)
-# Subject to seven inequality constraints (Coello 2000; Ragsdell & Phillips 1976).
+# CEC2020-RW prob_k = 19 : Welded Beam
+# Variables: x = [h, l, t, b]   (CEC variable order x1..x4)
+# Note: CEC2020 uses the non-textbook constants Pc ∝ sqrt(t²·b⁶/30) and
+# delta = 6PL³/(E·t²·b). J term is (l²/4 + (h+t)²/4). Only 5 inequality
+# constraints (no welding-cost or h≥0.125 limit).
 # ============================================================================
 
 class WeldedBeam(EngineeringProblem):
     NDIM = 4
-    LB = [0.1, 0.1, 0.1, 0.1]
+    LB = [0.125, 0.1, 0.1, 0.1]
     UB = [2.0, 10.0, 10.0, 2.0]
     F_GLOBAL = 1.724852308597366
     F_OFFSET = 1.0e4
 
-    # Material / loading constants
-    _P = 6000.0      # load (lb)
-    _L = 14.0        # overhang (in)
-    _E = 30.0e6      # Young's modulus (psi)
-    _G = 12.0e6      # shear modulus (psi)
+    _P = 6000.0
+    _L = 14.0
+    _E = 30.0e6
+    _G = 12.0e6
     _TAU_MAX = 13_600.0
     _SIGMA_MAX = 30_000.0
     _DELTA_MAX = 0.25
 
     def _objective(self, x):
         h, l, t, b = x
-        return 1.10471 * h * h * l + 0.04811 * t * b * (self._L + l)
+        return 1.10471 * h * h * l + 0.04811 * t * b * (14.0 + l)
 
     def constraints(self, x):
         h, l, t, b = x
         P, L, E, G = self._P, self._L, self._E, self._G
 
-        M = P * (L + l / 2.0)
-        R = np.sqrt(l * l / 4.0 + ((h + t) / 2.0) ** 2)
-        J = 2.0 * (np.sqrt(2.0) * h * l
-                   * (l * l / 12.0 + ((h + t) / 2.0) ** 2))
+        Pc = (4.013 * E * np.sqrt(t * t * b ** 6 / 30.0) / (L * L)
+              * (1.0 - t / (2.0 * L) * np.sqrt(E / (4.0 * G))))
+        sigma = 6.0 * P * L / (b * t * t)
+        delta = 6.0 * P * L ** 3 / (E * t * t * b)
 
-        tau_p = P / (np.sqrt(2.0) * h * l)
+        J = 2.0 * (np.sqrt(2.0) * h * l
+                   * (l * l / 4.0 + (h + t) ** 2 / 4.0))
+        R = np.sqrt(l * l / 4.0 + (h + t) ** 2 / 4.0)
+        M = P * (L + l / 2.0)
         tau_pp = M * R / J
+        tau_p = P / (np.sqrt(2.0) * h * l)
         tau = np.sqrt(tau_p * tau_p
                       + 2.0 * tau_p * tau_pp * l / (2.0 * R)
                       + tau_pp * tau_pp)
 
-        sigma = 6.0 * P * L / (b * t * t)
-        delta = 4.0 * P * L ** 3 / (E * b * t ** 3)
-        Pc = ((4.013 * E * np.sqrt(t * t * b ** 6 / 36.0)) / (L * L)) \
-             * (1.0 - (t / (2.0 * L)) * np.sqrt(E / (4.0 * G)))
-
         g1 = tau - self._TAU_MAX
         g2 = sigma - self._SIGMA_MAX
         g3 = h - b
-        g4 = 0.10471 * h * h + 0.04811 * t * b * (L + l) - 5.0
-        g5 = 0.125 - h
-        g6 = delta - self._DELTA_MAX
-        g7 = P - Pc
-        return np.array([g1, g2, g3, g4, g5, g6, g7])
+        g4 = delta - self._DELTA_MAX
+        g5 = P - Pc
+        return np.array([g1, g2, g3, g4, g5])
 
 
 # ============================================================================
-# Speed Reducer
-# ----------------------------------------------------------------------------
-# Variables: x = [b (face width), m (module), z (teeth, INTEGER),
-#                 l1 (shaft 1 length), l2 (shaft 2 length),
-#                 d1 (shaft 1 dia.),   d2 (shaft 2 dia.)]
-# Minimize:  classical 7-var weight expression (Golinski 1973).
-# Subject to 11 inequality constraints.
-# ============================================================================
-
-class SpeedReducer(EngineeringProblem):
-    NDIM = 7
-    LB = [2.6, 0.7, 17.0, 7.3, 7.8, 2.9, 5.0]
-    UB = [3.6, 0.8, 28.0, 8.3, 8.3, 3.9, 5.5]
-    F_GLOBAL = 2994.42410581
-    F_OFFSET = 1.0e6
-
-    def _canonicalize(self, x):
-        x = np.array(x, dtype=float)
-        # Teeth count z (x[2]) is integer.
-        x[2] = float(int(round(x[2])))
-        return x
-
-    def _objective(self, x):
-        b, m, z, l1, l2, d1, d2 = x
-        return (0.7854 * b * m * m
-                * (3.3333 * z * z + 14.9334 * z - 43.0934)
-                - 1.508 * b * (d1 * d1 + d2 * d2)
-                + 7.4777 * (d1 ** 3 + d2 ** 3)
-                + 0.7854 * (l1 * d1 * d1 + l2 * d2 * d2))
-
-    def constraints(self, x):
-        b, m, z, l1, l2, d1, d2 = x
-        g1 = 27.0 / (b * m * m * z) - 1.0
-        g2 = 397.5 / (b * m * m * z * z) - 1.0
-        g3 = 1.93 * l1 ** 3 / (m * z * d1 ** 4) - 1.0
-        g4 = 1.93 * l2 ** 3 / (m * z * d2 ** 4) - 1.0
-        A1 = (745.0 * l1 / (m * z)) ** 2 + 16.9e6
-        g5 = np.sqrt(A1) / (110.0 * d1 ** 3) - 1.0
-        A2 = (745.0 * l2 / (m * z)) ** 2 + 157.5e6
-        g6 = np.sqrt(A2) / (85.0 * d2 ** 3) - 1.0
-        g7 = m * z / 40.0 - 1.0
-        g8 = 5.0 * m / b - 1.0
-        g9 = b / (12.0 * m) - 1.0
-        g10 = (1.5 * d1 + 1.9) / l1 - 1.0
-        g11 = (1.1 * d2 + 1.9) / l2 - 1.0
-        return np.array([g1, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11])
-
-
-# ============================================================================
-# Three-Bar Truss
-# ----------------------------------------------------------------------------
-# Variables: x = [A1, A2]  (cross-sectional areas of bars; bar 3 area == bar 1)
-# Minimize:  f = (2*sqrt(2)*A1 + A2) * L,  L = 100 cm
-# Subject to three stress constraints (Nowacki 1980; Ray & Saini 2001).
-# Loading: P = 2 kN/cm^2, sigma_max = 2 kN/cm^2.
+# CEC2020-RW prob_k = 20 : Three-Bar Truss
+# Variables: x = [A1, A2] ∈ [0,1]².  L=100, P=2, σ_max=2 baked into formula.
 # ============================================================================
 
 class ThreeBarTruss(EngineeringProblem):
     NDIM = 2
-    LB = [1e-3, 1e-3]
+    LB = [0.0, 0.0]
     UB = [1.0, 1.0]
     F_GLOBAL = 263.8958433764628
     F_OFFSET = 1.0e3
 
-    _L = 100.0
-    _P = 2.0
-    _SIGMA = 2.0
-
     def _objective(self, x):
         A1, A2 = x
-        return (2.0 * np.sqrt(2.0) * A1 + A2) * self._L
+        return (2.0 * np.sqrt(2.0) * A1 + A2) * 100.0
 
     def constraints(self, x):
         A1, A2 = x
         denom = np.sqrt(2.0) * A1 * A1 + 2.0 * A1 * A2
         if abs(denom) <= 1e-12:
             return np.array([1.0e6, 1.0e6, 1.0e6])
-        g1 = (np.sqrt(2.0) * A1 + A2) / denom * self._P - self._SIGMA
-        g2 = A2 / denom * self._P - self._SIGMA
-        g3 = 1.0 / (np.sqrt(2.0) * A2 + A1) * self._P - self._SIGMA
+        g1 = (np.sqrt(2.0) * A1 + A2) / denom * 2.0 - 2.0
+        g2 = A2 / denom * 2.0 - 2.0
+        g3 = 1.0 / (np.sqrt(2.0) * A2 + A1) * 2.0 - 2.0
         return np.array([g1, g2, g3])
 
 
 # ============================================================================
-# I-Beam (vertical deflection minimization)
-# ----------------------------------------------------------------------------
-# Variables: x = [b (flange width), h (section height),
-#                 tw (web thickness), tf (flange thickness)]
-# Minimize:  vertical deflection f = PL^3 / (48 E I), with
-#            I = (tw (h - 2 tf)^3) / 12 + (b tf^3)/6 + 2 b tf ((h - tf)/2)^2
-# Constraints: cross-section area cap and combined-stress limit.
-# Reference: Gold & Krishnamurty (1997); Coello & Christiansen (2000).
+# CEC2020-RW prob_k = 15 : Weight Minimization of a Speed Reducer
+# Variables: x = [b, m, z, l1, l2, d1, d2]
+# Note: x5 (l2) lower bound is 7.3 in CEC2020 (not the 7.8 in some other
+# sources). Teeth count z is *not* snapped to integer in the CEC code.
+# Objective uses 7.477 (CEC) not 7.4777.
 # ============================================================================
 
-class IBeam(EngineeringProblem):
-    NDIM = 4
-    LB = [10.0, 10.0, 0.9, 0.9]
-    UB = [50.0, 80.0, 5.0, 5.0]
-    F_GLOBAL = 0.0130741
-    F_OFFSET = 1.0e2
-
-    _P = 600.0       # kN, vertical load
-    _Q = 50.0        # kN, lateral load
-    _L = 200.0       # cm, span
-    _E = 2.0e4       # kN/cm^2
+class SpeedReducer(EngineeringProblem):
+    NDIM = 7
+    LB = [2.6, 0.7, 17.0, 7.3, 7.3, 2.9, 5.0]
+    UB = [3.6, 0.8, 28.0, 8.3, 8.3, 3.9, 5.5]
+    F_GLOBAL = 2994.42410581
+    F_OFFSET = 1.0e6
 
     def _objective(self, x):
-        b, h, tw, tf = x
-        I = (tw * (h - 2.0 * tf) ** 3) / 12.0 \
-            + (b * tf ** 3) / 6.0 \
-            + 2.0 * b * tf * ((h - tf) / 2.0) ** 2
-        if I <= 1e-12:
-            return 1.0e6
-        return (self._P * self._L ** 3) / (48.0 * self._E * I)
+        b, m, z, l1, l2, d1, d2 = x
+        return (0.7854 * b * m * m
+                * (3.3333 * z * z + 14.9334 * z - 43.0934)
+                - 1.508 * b * (d1 * d1 + d2 * d2)
+                + 7.477 * (d1 ** 3 + d2 ** 3)
+                + 0.7854 * (l1 * d1 * d1 + l2 * d2 * d2))
 
     def constraints(self, x):
-        b, h, tw, tf = x
-        area = 2.0 * b * tf + tw * (h - 2.0 * tf)
-        g1 = area - 300.0  # cross-section area <= 300 cm^2
-
-        I_xx = (tw * (h - 2.0 * tf) ** 3) / 12.0 \
-            + (b * tf ** 3) / 6.0 \
-            + 2.0 * b * tf * ((h - tf) / 2.0) ** 2
-        I_yy = ((h - 2.0 * tf) * tw ** 3) / 12.0 \
-            + 2.0 * (tf * b ** 3) / 12.0
-        if I_xx <= 1e-12 or I_yy <= 1e-12:
-            return np.array([g1, 1.0e6])
-        sigma = (180.0 * self._P) / I_xx + (15.0 * self._Q) / I_yy
-        g2 = sigma - 6.0
-        return np.array([g1, g2])
-
-
-# ============================================================================
-# Cantilever Beam (5-segment hollow square cross-section)
-# ----------------------------------------------------------------------------
-# Variables: x = [x1, x2, x3, x4, x5]  (segment side lengths)
-# Minimize:  f = 0.0624 * (x1 + x2 + x3 + x4 + x5)
-# Subject to: g1 = 61/x1^3 + 37/x2^3 + 19/x3^3 + 7/x4^3 + 1/x5^3 - 1 <= 0
-# Reference: Fleury & Braibant (1986); Chickermane & Gea (1996).
-# ============================================================================
-
-class Cantilever(EngineeringProblem):
-    NDIM = 5
-    LB = [0.01, 0.01, 0.01, 0.01, 0.01]
-    UB = [100.0, 100.0, 100.0, 100.0, 100.0]
-    F_GLOBAL = 1.33995636
-    F_OFFSET = 1.0e2
-
-    def _objective(self, x):
-        return 0.0624 * float(np.sum(x))
-
-    def constraints(self, x):
-        x1, x2, x3, x4, x5 = x
-        denoms = np.array([x1, x2, x3, x4, x5]) ** 3
-        if np.any(denoms <= 1e-12):
-            return np.array([1.0e6])
-        g1 = (61.0 / denoms[0] + 37.0 / denoms[1] + 19.0 / denoms[2]
-              + 7.0 / denoms[3] + 1.0 / denoms[4]) - 1.0
-        return np.array([g1])
+        b, m, z, l1, l2, d1, d2 = x
+        g1 = -b * m * m * z + 27.0
+        g2 = -b * m * m * z * z + 397.5
+        g3 = -m * d1 ** 4 * z * l1 ** (-3) + 1.93
+        g4 = -m * d2 ** 4 * z / l2 ** 3 + 1.93
+        g5 = 10.0 * d1 ** (-3) * np.sqrt(16.91e6
+                                         + (745.0 * l1 / (m * z)) ** 2) - 1100.0
+        g6 = 10.0 * d2 ** (-3) * np.sqrt(157.5e6
+                                         + (745.0 * l2 / (m * z)) ** 2) - 850.0
+        g7 = m * z - 40.0
+        g8 = -b / m + 5.0
+        g9 = b / m - 12.0
+        g10 = 1.5 * d1 - l1 + 1.9
+        g11 = 1.1 * d2 - l2 + 1.9
+        return np.array([g1, g2, g3, g4, g5, g6, g7, g8, g9, g10, g11])
 
 
 ENGINEERING_FUNCS = [
@@ -388,7 +268,5 @@ ENGINEERING_FUNCS = [
     ("PressureVessel",           PressureVessel),
     ("WeldedBeam",               WeldedBeam),
     ("ThreeBarTruss",            ThreeBarTruss),
-    ("IBeam",                    IBeam),
-    ("Cantilever",               Cantilever),
     ("SpeedReducer",             SpeedReducer),
 ]
