@@ -16,8 +16,6 @@
     "PressureVessel",
     "WeldedBeam",
     "ThreeBarTruss",
-    "IBeam",
-    "Cantilever",
     "SpeedReducer"
   ]
 }

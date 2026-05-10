@@ -153,7 +153,10 @@ class WeldedBeam(EngineeringProblem):
     NDIM = 4
     LB = [0.125, 0.1, 0.1, 0.1]
     UB = [2.0, 10.0, 10.0, 2.0]
-    F_GLOBAL = 1.724852308597366
+    # CEC2020's modified δ = 6PL³/(E·t²·b) (vs. textbook 4PL³/(E·t³·b))
+    # shifts the optimum below the canonical 1.72485 textbook value.
+    # Recomputed by differential evolution on the CEC formulation.
+    F_GLOBAL = 1.670217694
     F_OFFSET = 1.0e4
 
     _P = 6000.0
@@ -234,7 +237,9 @@ class SpeedReducer(EngineeringProblem):
     NDIM = 7
     LB = [2.6, 0.7, 17.0, 7.3, 7.3, 2.9, 5.0]
     UB = [3.6, 0.8, 28.0, 8.3, 8.3, 3.9, 5.5]
-    F_GLOBAL = 2994.42410581
+    # Recomputed for the CEC formulation (16.91e6 vs textbook 16.9e6 in g5
+    # shifts the active boundary). Matches textbook Golinski value to 3 dp.
+    F_GLOBAL = 2994.424466
     F_OFFSET = 1.0e6
 
     def _objective(self, x):

@@ -11,7 +11,7 @@ Three benchmark categories are supported:
 |---|---|---|---|---|
 | `cec2022` | Boundary-constrained black-box (CEC 2022 single-objective) | F1–F12 | {2, 10, 20} | Default; competition protocol |
 | `separable` | Classical separable scalable functions | Sphere, Rastrigin, Schwefel, SumOfDifferentPowers, Step | any | For diagnostics / unit-feature isolation |
-| `engineering` | Real-world *constrained* mechanical-design problems | TensionCompressionSpring, PressureVessel, WeldedBeam, ThreeBarTruss, IBeam, Cantilever, SpeedReducer | fixed (2–7) | Mixed-integer; Deb feasibility-rule encoding into scalar fitness |
+| `engineering` | CEC2020 Real-World Constrained Optimization (mechanical subset) | TensionCompressionSpring, PressureVessel, WeldedBeam, ThreeBarTruss, SpeedReducer | fixed (2–7) | Ported verbatim from `cec20_func.m` (RC-15/17/18/19/20); Deb feasibility-rule encoding into scalar fitness |
 | `tsp` | Travelling Salesman Problem (TSPLIB EUC_2D) | eil51, berlin52, kroA100, ch150, kroA200 | per instance (51–200) | Permutation encoding; OX crossover, swap/inversion mutation |
 
 ## Project layout
@@ -24,7 +24,7 @@ HybridGA-Framework/
 │   │   └── features.py
 │   ├── benchmarks/      # Suite wrappers + multi-variant protocol runners
 │   │   ├── suites.py        # cec2022 + separable + engineering registries
-│   │   └── engineering.py   # 4 constrained mechanical-design problems
+│   │   └── engineering.py   # CEC2020-RW mechanical subset (5 problems)
 │   └── analysis/        # Statistical summaries (Wilcoxon, Friedman, plotting)
 │       └── stats.py
 ├── scripts/
