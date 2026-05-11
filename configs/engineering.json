@@ -1,8 +1,8 @@
 {
   "suite": "engineering",
   "encoding": "real",
-  "pop_size": 50,
-  "max_fes": 30000,
+  "pop_size": 100,
+  "max_fes": 500000,
   "n_runs": 30,
   "selection": {"kind": "tournament", "k": 2, "feasibility_rules": "deb"},
   "constraint_handling": "deb_three_rules",
@@ -10,7 +10,7 @@
   "mutation":  {"kind": "poly", "eta": 20, "pm_per_gene": "1/D"},
   "elitism": {"k": 1, "prefer_feasible": true},
   "stopping": "fe_budget",
-  "_stopping_note": "Halt when cumulative function evaluations reach max_fes (30,000) — literature-standard for low-D constrained engineering benchmarks.",
+  "_stopping_note": "Halt when cumulative function evaluations reach max_fes (500,000) — extended budget for thorough convergence on low-D constrained engineering benchmarks; comfortably above the CEC 2020-RW 240,000 reference.",
   "problems": [
     "TensionCompressionSpring",
     "PressureVessel",
