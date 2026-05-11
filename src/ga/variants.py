@@ -151,6 +151,14 @@ VARIANTS = [
     Spec("SGA+metropolis_replace",
          replace=feat.make_metropolis_replace(T0=1.0, T_end=1e-3,
                                                schedule="exp", elitism_k=1)),
+    Spec("SGA+cuckoo_discovery",
+         diversity=feat.make_cuckoo_discovery(pa=0.25)),
+    Spec("SGA+abc_scout",         replace=feat.make_abc_scout()),
+    Spec("SGA+bfo_chemotaxis",    mutate=feat.make_bfo_chemotaxis(step_size_frac=0.05)),
+    Spec("SGA+krill_herd_mut",    mutate=feat.make_krill_herd()),
+    Spec("SGA+sos_mut",           mutate=feat.mutate_sos),
+    Spec("SGA+bbo_migration_cx",  crossover=feat.crossover_bbo),
+    Spec("SGA+gsa_full_mut",      mutate=feat.make_gsa_full()),
 ]
 
 

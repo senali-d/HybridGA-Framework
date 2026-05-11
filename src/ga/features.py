@@ -2150,3 +2150,430 @@ def make_fast_ga_mutate(beta=1.5, dist="cauchy", scale=0.1, scale_end=None):
         return np.clip(x + delta, lb, ub).tolist()
 
     return mutate_fast_ga
+
+
+# ============================================================
+# F78 — Cuckoo Search egg discovery (Yang & Deb 2009)
+# ============================================================
+def make_cuckoo_discovery(pa=0.25):
+    """Per generation, discover-and-replace a fraction of nests.
+
+    For each individual, with probability `pa` build a "discovered" replacement
+    `x' = x + r * (x_perm1 - x_perm2)` where the two permutations are random
+    other nests (Yang & Deb 2009's biased-walk discovery rule). The new vector
+    is bound-handled and evaluated by the core's post-diversity eval loop.
+    Pairs with Lévy mutation (F13) for the full CS algorithm; standalone here
+    so the ablation isolates the discovery mechanism.
+    """
+    def diversity_cuckoo(population, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        n = len(population)
+        if n < 3:
+            return population
+        for i in range(n):
+            if rng.random() >= pa:
+                continue
+            j, k = rng.choice(n, size=2, replace=False)
+            x = _arr(population[i])
+            xj = _arr(population[j])
+            xk = _arr(population[k])
+            r = rng.random()
+            new_x = x + r * (xj - xk)
+            new_x = np.clip(new_x, lb, ub)
+            new_ind = creator.Individual(new_x.tolist())
+            new_ind.age = 0
+            population[i] = new_ind
+        return population
+    return diversity_cuckoo
+
+
+# ============================================================
+# F79 — ABC explicit scout phase (Karaboga & Basturk 2007)
+# ============================================================
+def make_abc_scout(limit=None):
+    """Trial-counter abandonment with scout re-initialization.
+
+    Wraps generational k-elitism. Each individual carries `ind.trial`,
+    incremented whenever it survives a generation without being improved on
+    by its slot's offspring; reset to 0 on improvement. Once `trial > limit`
+    the individual is abandoned and replaced by a uniform random scout (with
+    invalid fitness — the core's post-replace eval loop charges the FE).
+
+    `limit` defaults to `pop_size * dim` per Karaboga's canonical heuristic.
+    """
+    def replace_abc(parents, offspring, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        dim = ctx["dim"]
+        pop_size = ctx["pop_size"]
+        lim = limit if limit is not None else max(1, pop_size * dim)
+
+        # Pair offspring against parents by sorted-fitness slot for trial
+        # tracking. Use generational k-elitism for the actual survival
+        # decision (consistent with the default replacer).
+        survivors = generational_elitism(parents, offspring, int(ctx["elitism_k"]))
+
+        parents_by_f = sorted(parents, key=lambda x: x.fitness.values[0])
+        offspring_by_f = sorted(offspring, key=lambda x: x.fitness.values[0])
+        # Slot-wise improvement check (best-vs-best, 2nd-vs-2nd, ...) is the
+        # standard ABC analogue here.
+        m = min(len(parents_by_f), len(offspring_by_f))
+        improved_ids = set()
+        unimproved_ids = set()
+        for i in range(m):
+            p = parents_by_f[i]
+            o = offspring_by_f[i]
+            if o.fitness.values[0] < p.fitness.values[0]:
+                improved_ids.add(id(p))
+            else:
+                unimproved_ids.add(id(p))
+
+        # Update trial counters on whatever survived.
+        for ind in survivors:
+            t = getattr(ind, "trial", 0)
+            if id(ind) in improved_ids:
+                ind.trial = 0
+            elif id(ind) in unimproved_ids:
+                ind.trial = t + 1
+            else:
+                # Newly produced offspring carried into survivors via elitism
+                # of offspring: fresh slot.
+                ind.trial = 0
+
+        # Scout phase: abandon any survivor whose trial exceeded the limit.
+        for i, ind in enumerate(survivors):
+            if getattr(ind, "trial", 0) > lim:
+                scout_vec = rng.uniform(lb, ub).tolist()
+                scout = creator.Individual(scout_vec)
+                scout.age = 0
+                scout.trial = 0
+                # Leave fitness invalid; core's post-replace eval will score it.
+                survivors[i] = scout
+        return survivors
+    return replace_abc
+
+
+# ============================================================
+# F80 — Bacterial Foraging chemotaxis (Passino 2002)
+# ============================================================
+def make_bfo_chemotaxis(step_size_frac=0.05):
+    """Swim-and-tumble per-individual mutation.
+
+    Each bacterium keeps a persistent unit direction `ind.bfo_dir` and the
+    fitness it observed last time it was perturbed (`ind.bfo_prev_fitness`).
+    If the most-recent step improved fitness, *swim* — take another step in
+    the same direction. Otherwise *tumble* — sample a new uniform random
+    unit direction first, then step. First call (no state) tumbles.
+
+    Step magnitude = `step_size_frac * (ub - lb)`.
+    """
+    def mutate_bfo(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        dim = ctx["dim"]
+        x = _arr(ind)
+        cur_f = ind.fitness.values[0] if ind.fitness.valid else np.inf
+
+        prev_dir = getattr(ind, "bfo_dir", None)
+        prev_f = getattr(ind, "bfo_prev_fitness", np.inf)
+
+        # Tumble if no history or fitness worsened/equal (Passino's rule).
+        if prev_dir is None or cur_f >= prev_f:
+            d = rng.standard_normal(dim)
+            norm = np.linalg.norm(d)
+            d = d / norm if norm > 1e-12 else np.ones(dim) / np.sqrt(dim)
+        else:
+            d = np.asarray(prev_dir, dtype=float)
+            if d.shape != x.shape:
+                d = rng.standard_normal(dim)
+                d /= max(np.linalg.norm(d), 1e-12)
+
+        step = step_size_frac * (ub - lb) * d
+        new_x = np.clip(x + step, lb, ub)
+        # Stash state on the *new* individual via ctx side-channel: the core
+        # rebuilds the Individual after bound-handling, so we attach attrs to
+        # the list we return — but the core wraps with make_individual which
+        # only sets age. Instead, store keyed by id(ind) on ctx and migrate
+        # at next call: pragmatic since BFO state is robust to slot churn.
+        # Simpler: write directly to ind so future generations carrying the
+        # same Individual (elitism path) benefit; new offspring will tumble
+        # on their first call, which is correct.
+        ind.bfo_dir = d
+        ind.bfo_prev_fitness = cur_f
+        return new_x.tolist()
+    return mutate_bfo
+
+
+# ============================================================
+# F81 — Krill Herd movement (Gandomi & Alavi 2012)
+# ============================================================
+def make_krill_herd(Nmax=0.01, Vf=0.02, Dmax=0.005, n_neighbors=5,
+                    inertia_n=0.5, inertia_f=0.5):
+    """Three additive motion sources: neighbor-induced, foraging, diffusion.
+
+    Per call:
+      N_i = Nmax * α_local + ω_n * N_prev   (neighbor attraction by fitness)
+      F_i = Vf   * (β_food + β_best) + ω_f * F_prev   (toward food + pbest)
+      D_i = Dmax * (1 - t_ratio) * random_unit            (diffusion)
+      x' = x + Δt * (N_i + F_i + D_i)
+
+    Δt is scaled to half the bounding-box diagonal per dim (Gandomi & Alavi).
+    Persistent state (N_prev, F_prev, pbest) lives on `ind` as attrs.
+    """
+    def mutate_kh(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        dim = ctx["dim"]
+        pop = ctx.get("_population", [])
+        if len(pop) < 2:
+            return list(ind)
+        x = _arr(ind)
+        cur_f = ind.fitness.values[0] if ind.fitness.valid else np.inf
+
+        fits = np.array(
+            [p.fitness.values[0] if p.fitness.valid else np.inf for p in pop],
+            dtype=float,
+        )
+        worst, best_f = fits.max(), fits.min()
+        f_span = (worst - best_f) if worst > best_f + 1e-30 else 1.0
+
+        # Neighbor-induced motion (local attraction by fitness gradient).
+        dists = np.array(
+            [np.linalg.norm(_arr(p) - x) for p in pop], dtype=float
+        )
+        ds = np.mean(dists) / 5.0 + 1e-12
+        order = np.argsort(dists)
+        K = min(n_neighbors, len(pop))
+        nbr_idx = order[:K]
+        alpha_local = np.zeros(dim)
+        for j in nbr_idx:
+            xj = _arr(pop[j])
+            khat = (xj - x) / (dists[j] + ds)
+            fhat = (cur_f - fits[j]) / f_span
+            if not np.isfinite(fhat):
+                continue
+            alpha_local += fhat * khat
+
+        N_prev = getattr(ind, "kh_N", np.zeros(dim))
+        if N_prev.shape != x.shape:
+            N_prev = np.zeros(dim)
+        N = Nmax * alpha_local + inertia_n * N_prev
+
+        # Foraging motion: toward food (inv-fitness-weighted centroid) and
+        # personal best.
+        inv_w = 1.0 / (fits - best_f + 1.0)
+        positions = np.array([_arr(p) for p in pop])
+        food = (positions * inv_w[:, None]).sum(axis=0) / inv_w.sum()
+        food_fit = float(np.mean(fits))  # cheap proxy
+        beta_food = ((cur_f - food_fit) / f_span) * (food - x) / (
+            np.linalg.norm(food - x) + 1e-12)
+
+        pbest_x = np.asarray(getattr(ind, "kh_pbest_x", x), dtype=float)
+        pbest_f = float(getattr(ind, "kh_pbest_f", cur_f))
+        if pbest_x.shape != x.shape:
+            pbest_x = x.copy(); pbest_f = cur_f
+        beta_best = ((cur_f - pbest_f) / f_span) * (pbest_x - x) / (
+            np.linalg.norm(pbest_x - x) + 1e-12)
+
+        F_prev = getattr(ind, "kh_F", np.zeros(dim))
+        if F_prev.shape != x.shape:
+            F_prev = np.zeros(dim)
+        F = Vf * (beta_food + beta_best) + inertia_f * F_prev
+
+        # Random diffusion, decaying with time.
+        t = float(ctx.get("t_ratio", 0.0))
+        rand_dir = rng.uniform(-1.0, 1.0, dim)
+        D = Dmax * (1.0 - t) * rand_dir
+
+        dt = 0.5 * float(np.mean(ub - lb))
+        new_x = np.clip(x + dt * (N + F + D), lb, ub)
+
+        # Persist state for next call.
+        ind.kh_N = N
+        ind.kh_F = F
+        if cur_f < pbest_f:
+            ind.kh_pbest_x = x.copy()
+            ind.kh_pbest_f = cur_f
+        else:
+            ind.kh_pbest_x = pbest_x
+            ind.kh_pbest_f = pbest_f
+        return new_x.tolist()
+    return mutate_kh
+
+
+# ============================================================
+# F82 — Symbiotic Organisms Search (Cheng & Prayogo 2014)
+# ============================================================
+def mutate_sos(ind, ctx):
+    """Per call, pick one of {mutualism, commensalism, parasitism} uniformly.
+
+    Parameter-free (like TLBO). Parasitism greedily compares and may charge
+    one extra FE against ctx['eval_counter']; skipped if the budget is spent.
+    """
+    rng = ctx["rng"]
+    lb, ub = ctx["lb"], ctx["ub"]
+    dim = ctx["dim"]
+    pop = ctx.get("_population", [])
+    if len(pop) < 2:
+        return list(ind)
+    x = _arr(ind)
+    best = ctx.get("best_so_far")
+    x_best = _arr(best) if best is not None else x.copy()
+
+    # Pick a partner ≠ self by identity where possible.
+    j = int(rng.integers(0, len(pop)))
+    xj = _arr(pop[j])
+
+    phase = int(rng.integers(0, 3))
+    if phase == 0:
+        # Mutualism: mutual vector, benefit factors ∈ {1,2}.
+        mv = 0.5 * (x + xj)
+        BF1 = 1 + int(rng.integers(0, 2))
+        r = rng.random(dim)
+        new_x = x + r * (x_best - mv * BF1)
+    elif phase == 1:
+        # Commensalism: x_i helped by x_j; x_j unchanged.
+        r = rng.uniform(-1.0, 1.0, dim)
+        new_x = x + r * (x_best - xj)
+    else:
+        # Parasitism: build parasite by replacing random dims of x with
+        # uniform random values; greedy keep if better.
+        evaluate_fn = ctx.get("evaluate_fn")
+        eval_counter = ctx.get("eval_counter")
+        max_fes = ctx.get("max_fes", np.inf)
+        if evaluate_fn is None or eval_counter is None or eval_counter[0] >= max_fes:
+            return list(x)
+        parasite = x.copy()
+        n_swap = max(1, int(rng.integers(1, dim + 1) // 2))
+        dims = rng.choice(dim, size=n_swap, replace=False)
+        parasite[dims] = rng.uniform(lb[dims], ub[dims])
+        parasite = np.clip(parasite, lb, ub)
+        f_par = float(evaluate_fn(parasite))
+        eval_counter[0] += 1
+        cur_f = ind.fitness.values[0] if ind.fitness.valid else np.inf
+        if f_par < cur_f:
+            return parasite.tolist()
+        return list(x)
+
+    return np.clip(new_x, lb, ub).tolist()
+
+
+# ============================================================
+# F83 — Biogeography-Based Optimization migration (Simon 2008)
+# ============================================================
+def crossover_bbo(p1, p2, ctx):
+    """Rate-controlled per-gene migration.
+
+    Each parent's immigration rate λ and emigration rate μ are functions of
+    its rank in the current `_population`:
+        λ = 1 - rank/N      μ = rank/N        (sinusoidal-family, linear form)
+    For each gene of each child: with prob λ_self, replace with the same gene
+    from a population member chosen by roulette on μ. Otherwise keep self.
+    Children are migrants (no blended pair). Rates are per-individual, not
+    per-pair — the BBO distinction emphasized in the user's request.
+    """
+    rng = ctx["rng"]
+    pop = ctx.get("_population", [])
+    if len(pop) < 2:
+        return list(p1), list(p2)
+
+    fits = np.array(
+        [p.fitness.values[0] if p.fitness.valid else np.inf for p in pop],
+        dtype=float,
+    )
+    N = len(pop)
+    order = np.argsort(fits)                    # best first
+    ranks = np.empty(N, dtype=float)
+    ranks[order] = np.arange(N)
+    # Simon's convention: good HSI (rank=0, best) → high μ (emigrates
+    # features), low λ (accepts few incoming). Poor → opposite.
+    lam = ranks / max(N - 1, 1)                 # best → 0, worst → 1
+    mu = 1.0 - ranks / max(N - 1, 1)            # best → 1, worst → 0
+    mu_sum = mu.sum()
+    if mu_sum <= 0 or not np.isfinite(mu_sum):
+        return list(p1), list(p2)
+    mu_probs = mu / mu_sum
+    positions = np.array([_arr(p) for p in pop])
+
+    def _migrate(child_vec, child_lambda):
+        out = np.asarray(child_vec, dtype=float).copy()
+        dim = out.shape[0]
+        for d in range(dim):
+            if rng.random() < child_lambda:
+                src = int(rng.choice(N, p=mu_probs))
+                out[d] = positions[src, d]
+        return out.tolist()
+
+    # Find each parent's rank within the population (by closest match);
+    # parents passed in are clones of population members, so id() comparison
+    # is unreliable across the parent-clone step in core.py — use a value-
+    # based nearest lookup, which is exact for clones produced by the core.
+    def _rank_of(parent_vec):
+        pv = np.asarray(parent_vec, dtype=float)
+        diffs = np.linalg.norm(positions - pv, axis=1)
+        return int(ranks[int(np.argmin(diffs))])
+
+    r1 = _rank_of(p1)
+    r2 = _rank_of(p2)
+    lam1 = r1 / max(N - 1, 1)
+    lam2 = r2 / max(N - 1, 1)
+    c1 = _migrate(list(p1), lam1)
+    c2 = _migrate(list(p2), lam2)
+    return c1, c2
+
+
+# ============================================================
+# F84 — GSA with full G(t) decay + K-best subset (Rashedi 2009)
+# ============================================================
+def make_gsa_full(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
+    """Full GSA attraction with the canonical pieces F26 simplified:
+      - Gravitational constant decays as G(t) = G0 * exp(-alpha * t_ratio).
+      - Attraction sums only over the K-best subset, with K shrinking from N
+        down to max(2, kbest_final_frac * N) over the run.
+    Mass calculation otherwise unchanged from F26.
+    """
+    def mutate_gsa(ind, ctx):
+        rng = ctx["rng"]
+        lb, ub = ctx["lb"], ctx["ub"]
+        dim = ctx["dim"]
+        pop = ctx.get("_population", [])
+        N = len(pop)
+        if N < 2:
+            return list(ind)
+
+        fits = np.array(
+            [p.fitness.values[0] if p.fitness.valid else np.inf for p in pop],
+            dtype=float,
+        )
+        worst, best_f = fits.max(), fits.min()
+        denom = (worst - best_f) if worst > best_f + 1e-30 else 1.0
+        masses = (worst - fits) / denom + 1e-9
+        masses /= masses.sum()
+
+        t = float(ctx.get("t_ratio", 0.0))
+        G = G0 * math.exp(-alpha * t)
+
+        # K-best subset: shrink linearly from N down to floor(kbest_final_frac*N).
+        K_final = max(2, int(math.ceil(kbest_final_frac * N)))
+        K = max(K_final, int(round(N - (N - K_final) * t)))
+        K = min(K, N)
+        kbest_idx = np.argsort(fits)[:K]
+
+        x = _arr(ind)
+        force = np.zeros(dim)
+        for j in kbest_idx:
+            xj = _arr(pop[j])
+            d = np.linalg.norm(xj - x) + 1e-9
+            force += rng.random() * G * masses[j] * (xj - x) / d
+
+        # Treat force as acceleration; symplectic-style step with random
+        # velocity persistence on ind.
+        v_prev = np.asarray(getattr(ind, "gsa_v", np.zeros(dim)), dtype=float)
+        if v_prev.shape != x.shape:
+            v_prev = np.zeros(dim)
+        v_new = rng.random() * v_prev + force
+        new_x = np.clip(x + v_new, lb, ub)
+        ind.gsa_v = v_new
+        return new_x.tolist()
+    return mutate_gsa
