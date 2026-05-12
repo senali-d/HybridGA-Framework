@@ -195,6 +195,18 @@ VARIANTS = [
     # explicit "+EAX" variant would just duplicate it. Keep an OX variant so
     # the pre-EAX crossover stays reachable as an ablation point.
     Spec("SGA+OX_crossover", crossover=feat.crossover_ox, encodings=PERM),
+    # EAX + ACO, *additive*: keeps the suite's EAX crossover untouched and
+    # layers on (a) ACO-guided segment-rebuild mutation and (b) the pheromone
+    # + 2-opt refine. Nothing is replaced except the (free) mutate slot and
+    # the (empty) refine slot — so it gets EAX's recombination *and* the full
+    # GACO machinery (edge-pheromone learning + memetic 2-opt).
+    Spec("SGA+EAX_ACO",
+         mutate=feat.make_aco_guided_mutation(seg_frac=0.2, seg_prob=0.5,
+                                              alpha=1.0, beta=3.0, q0=0.3,
+                                              rho=0.1, cand_k=16),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
+                                     deposit_scheme="mmas", cand_k=16),
+         encodings=PERM),
 ]
 
 

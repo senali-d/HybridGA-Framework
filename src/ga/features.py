@@ -3153,3 +3153,69 @@ def crossover_ox(p1, p2, ctx):
     the suite baseline uses EAX."""
     c1, c2 = tools.cxOrdered(list(p1), list(p2))
     return c1, c2
+
+
+# ============================================================================
+# F88 — ACO-guided mutation for permutation/TSP (pairs with make_aco_refine)
+# ============================================================================
+def make_aco_guided_mutation(seg_frac=0.2, seg_prob=0.5, alpha=1.0, beta=3.0,
+                             q0=0.3, rho=0.1, cand_k=16, swap_pm=0.02):
+    """ACO-guided mutation for TSP — an *additive* enhancement that leaves the
+    crossover slot alone.
+
+    With probability `seg_prob`: pick a random contiguous segment of about
+    `seg_frac`*n cities and re-order the cities inside it by Ant Colony
+    System's pseudo-random-proportional rule on the shared pheromone matrix
+    tau and heuristic eta = 1/dist (starting the rebuild from the city just
+    before the segment; with probability q0 exploit the argmax, else sample
+    roulette-wise). Otherwise fall back to a baseline-style perturbation:
+    whole-tour inversion (prob 1/2) or per-position swap with rate `swap_pm`.
+
+    Shares ctx['_aco'] with `make_aco_refine`, so once the refine starts
+    depositing pheromone the segment rebuilds are steered by it; in the very
+    first generation tau is uniform, so the rebuild is purely greedy-heuristic.
+    Only reads tau (the refine owns evaporation/deposit/bounds).
+    """
+    def mutate_aco_guided(ind, ctx):
+        rng = ctx["rng"]
+        st = _aco_state(ctx, rho, cand_k=cand_k)
+        n = st["n"]
+        tour = _as_perm(ind, n)
+        if n >= 5 and rng.random() < seg_prob:
+            tau, eta = st["tau"], st["eta"]
+            L = int(max(2, min(n - 1, round(seg_frac * n))))
+            i = int(rng.integers(0, n))                 # segment start position
+            seg_pos = [(i + t) % n for t in range(L)]
+            anchor = tour[(i - 1) % n]                  # city before the segment
+            remaining = set(tour[p] for p in seg_pos)
+            new_order = []
+            cur = anchor
+            while remaining:
+                cand = np.fromiter(remaining, dtype=int, count=len(remaining))
+                w = (tau[cur, cand] ** alpha) * (eta[cur, cand] ** beta)
+                tot = float(w.sum())
+                if not np.isfinite(tot) or tot <= 0.0:
+                    nxt = int(cand[rng.integers(0, len(cand))])
+                elif rng.random() < q0:
+                    nxt = int(cand[int(np.argmax(w))])
+                else:
+                    nxt = int(cand[rng.choice(len(cand), p=w / tot)])
+                new_order.append(nxt)
+                remaining.discard(nxt)
+                cur = nxt
+            for p, c in zip(seg_pos, new_order):
+                tour[p] = c
+            return tour
+        # --- baseline-style perturbation fallback ---
+        if rng.random() < 0.5:
+            a, b = sorted(rng.integers(0, n, size=2).tolist())
+            tour[a:b + 1] = tour[a:b + 1][::-1]
+        else:
+            for p in range(n):
+                if rng.random() < swap_pm:
+                    qpos = int(rng.integers(0, n))
+                    tour[p], tour[qpos] = tour[qpos], tour[p]
+        return tour
+
+    mutate_aco_guided.__name__ = f"aco_guided_mut_seg{seg_frac:g}_p{seg_prob:g}"
+    return mutate_aco_guided
