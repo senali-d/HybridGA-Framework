@@ -159,6 +159,38 @@ VARIANTS = [
     Spec("SGA+sos_mut",           mutate=feat.mutate_sos),
     Spec("SGA+bbo_migration_cx",  crossover=feat.crossover_bbo),
     Spec("SGA+gsa_full_mut",      mutate=feat.make_gsa_full()),
+
+    # --- Permutation / TSP --------------------------------------------
+    # GACO: a *full* GA+ACO hybrid for combinatorial encodings. Replaces the
+    # suite's OX crossover with Ant-Colony-System edge-recombination
+    # construction (pheromone tau + heuristic eta, pseudo-random-proportional
+    # rule, k-NN candidate lists, online local pheromone update), and adds a
+    # per-generation refine that does 2-opt local search on the elite (charged
+    # against MaxFES) plus a global pheromone update. Mutation (swap/inversion)
+    # is inherited from the suite baseline. Three deposit schemes are wired as
+    # separate variants: MAX-MIN (default), rank-based, and elitist Ant System.
+    Spec("SGA+GACO_hybrid",
+         crossover=feat.make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3,
+                                               rho=0.1, cand_k=16,
+                                               local_update=True, xi=0.1),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
+                                     deposit_scheme="mmas", cand_k=16),
+         encodings=PERM),
+    Spec("SGA+GACO_asrank",
+         crossover=feat.make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3,
+                                               rho=0.1, cand_k=16,
+                                               local_update=True, xi=0.1),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
+                                     deposit_scheme="asrank", asrank_w=6,
+                                     cand_k=16),
+         encodings=PERM),
+    Spec("SGA+GACO_eas",
+         crossover=feat.make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3,
+                                               rho=0.1, cand_k=16,
+                                               local_update=True, xi=0.1),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
+                                     deposit_scheme="eas", cand_k=16),
+         encodings=PERM),
 ]
 
 

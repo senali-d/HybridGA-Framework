@@ -85,11 +85,16 @@ def _parse_euc2d_tsp(path: Path):
 
 
 def _euc2d_distance_matrix(coords: np.ndarray) -> np.ndarray:
-    """TSPLIB EUC_2D distance: nint(sqrt((x_i-x_j)^2 + (y_i-y_j)^2))."""
+    """TSPLIB EUC_2D distance: nint(sqrt((x_i-x_j)^2 + (y_i-y_j)^2)).
+
+    Per the TSPLIB-95 spec, ``nint(x) = floor(x + 0.5)`` — round half *up*,
+    not Python/NumPy's round-half-to-even. Using the wrong rule shifts a
+    handful of edge weights by one unit and makes optimal-tour lengths
+    disagree with the published optima, so compute it explicitly.
+    """
     diff = coords[:, None, :] - coords[None, :, :]
     d = np.sqrt(np.sum(diff * diff, axis=-1))
-    # TSPLIB rounds to nearest integer.
-    return np.rint(d).astype(np.int64)
+    return np.floor(d + 0.5).astype(np.int64)
 
 
 class TSPProblem:

@@ -219,29 +219,47 @@ def make_mutation(spec, dim):
             return mutated
         _mut.__name__ = f"poly_eta{int(eta)}_indpb{indpb:.4g}"
         return _mut
-    if kind == "swap":
-        # Permutation swap-mutation: swap two random positions with prob `pm`.
+    if kind in ("swap", "inversion"):
+        # Permutation mutation. `pm` is the per-position swap probability
+        # (kind="swap") or the whole-vector inversion probability
+        # (kind="inversion"). An optional `alt` names a second permutation
+        # operator; when set, each call picks `kind` or `alt` with equal
+        # probability, so a single spec can mix swap and inversion moves.
         pm = float(spec.get("pm", 1.0 / dim))
-        def _mut(ind, ctx):
-            seq = list(ind)
-            rng = ctx["rng"]
+        alt = spec.get("alt")
+        _PERM_OPS = ("swap", "inversion")
+        if alt is not None and alt not in _PERM_OPS:
+            raise ValueError(f"unknown alt mutation kind: {alt!r}")
+
+        def _apply_swap(seq, rng):
             for i in range(len(seq)):
                 if rng.random() < pm:
                     j = int(rng.integers(0, len(seq)))
                     seq[i], seq[j] = seq[j], seq[i]
             return seq
-        _mut.__name__ = f"swap_pm{pm:.4g}"
-        return _mut
-    if kind == "inversion":
-        pm = float(spec.get("pm", 1.0 / dim))
+
+        def _apply_inversion(seq, rng):
+            if rng.random() < pm:
+                i, j = sorted(rng.integers(0, len(seq), size=2).tolist())
+                seq[i:j + 1] = seq[i:j + 1][::-1]
+            return seq
+
+        _OP_FNS = {"swap": _apply_swap, "inversion": _apply_inversion}
+        primary_fn = _OP_FNS[kind]
+        alt_fn = _OP_FNS[alt] if alt is not None else None
+
         def _mut(ind, ctx):
             seq = list(ind)
             rng = ctx["rng"]
-            if rng.random() < pm:
-                i, j = sorted(rng.integers(0, len(seq), size=2).tolist())
-                seq[i:j+1] = seq[i:j+1][::-1]
-            return seq
-        _mut.__name__ = f"inversion_pm{pm:.4g}"
+            op = primary_fn
+            if alt_fn is not None and rng.random() < 0.5:
+                op = alt_fn
+            return op(seq, rng)
+
+        _mut.__name__ = (
+            f"{kind}_or_{alt}_pm{pm:.4g}" if alt is not None
+            else f"{kind}_pm{pm:.4g}"
+        )
         return _mut
     raise ValueError(f"unknown mutation kind: {kind!r}")
 
@@ -396,6 +414,11 @@ def run_sga(
         # candidates inside a single GA generation while respecting MaxFES.
         "evaluate_fn": problem.evaluate,
         "eval_counter": None,  # filled in below once eval_counter is constructed
+        # The problem object itself, so structure-aware operators (e.g. the
+        # GACO hybrid, which needs the TSP distance matrix for pheromone /
+        # heuristic / 2-opt) can reach instance data the abstract
+        # `(lb, ub, dim, evaluate)` interface does not expose.
+        "problem": problem,
     }
 
     # Pick operators (use defaults if not overridden)
@@ -686,6 +709,7 @@ def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
             "island_id": k,
             "evaluate_fn": problem.evaluate,
             "eval_counter": eval_counter,
+            "problem": problem,
         }
         init_vectors = init_fn(island_pop_sizes[k], dim, lb, ub, ctx)
         pop = [make_individual(apply_bounds(v, lb, ub, mode=ctx["bound_handling"], rng=rng)) for v in init_vectors]

@@ -107,8 +107,14 @@ def test_every_public_feature_has_a_variant():
         if obj.__module__ == "ga.features" and not name.startswith("_")
     }
 
+    # Cover every encoding so encoding-specific variants (e.g. the permutation
+    # GACO hybrid) are included, not just the real-coded ones.
+    all_variants = list(VARIANTS)
+    for enc in ("permutation", "discrete"):
+        all_variants += build_variants(_BASELINE, enc)
+
     referenced: set[str] = set()
-    for v in VARIANTS:
+    for v in all_variants:
         for slot in ("init_fn", "select_fn", "crossover_fn",
                      "mutate_fn", "replace_fn", "diversity_fn",
                      "refine_fn"):

@@ -2577,3 +2577,338 @@ def make_gsa_full(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
         ind.gsa_v = v_new
         return new_x.tolist()
     return mutate_gsa
+
+
+# ============================================================================
+# F85 — GACO: Genetic Algorithm + Ant Colony Optimization hybrid (TSP)
+# ============================================================================
+#
+# A *full* hybrid for permutation/TSP encodings. Unlike F63–F72 (which are a
+# binned per-dimension pheromone EDA for real-coded search), this maintains a
+# genuine edge-pheromone matrix tau[i][j] over cities and couples it with the
+# GA in three places:
+#
+#   1. crossover  -> `make_aco_recombination`
+#      ACS-style probabilistic tour construction biased by tau (learned) and
+#      eta = 1/dist (heuristic), with the candidate set restricted to the two
+#      parents' tour edges (an edge-recombination flavour). Pseudo-random-
+#      proportional rule: with prob q0 exploit argmax tau^alpha * eta^beta,
+#      otherwise sample roulette-wise. Falls back to all unvisited cities when
+#      the parent-edge candidate set is empty.
+#
+#   2. refine     -> `make_aco_refine`  (runs every generation, post-replacement)
+#      a. 2-opt local search on the top-k individuals (memetic step), using
+#         O(n^2) vectorised delta evaluation against the distance matrix. Each
+#         *accepted* improving move is charged 1 FE against MaxFES, so the
+#         hybrid's local search competes with the GA for the same budget.
+#      b. MAX-MIN-style pheromone update: evaporate tau *= (1 - rho); the
+#         iteration-best and global-best tours each deposit 1/length on their
+#         edges; clamp tau to [tau_max/(2n), tau_max] with
+#         tau_max = 1/(rho * best_length_so_far).
+#
+# The mutation slot is intentionally left to the suite baseline (swap/inversion)
+# so the variant's divergence from baseline stays minimal and reviewable.
+#
+# Both operators share state via ctx["_aco"], lazily built from
+# ctx["problem"].dist on first use. They therefore only make sense on a TSP
+# problem object exposing an integer `dist` matrix; using them elsewhere raises.
+
+
+def _aco_problem_dist(ctx):
+    problem = ctx.get("problem")
+    D = getattr(problem, "dist", None)
+    if D is None:
+        raise ValueError(
+            "GACO operators require a TSP-style problem exposing a `.dist` "
+            "matrix on ctx['problem']; got "
+            f"{type(problem).__name__ if problem is not None else None}."
+        )
+    return np.asarray(D, dtype=float)
+
+
+def _nn_tour_length(D):
+    """Greedy nearest-neighbour tour length from city 0 (a crude upper bound
+    used only to seed pheromone scaling)."""
+    n = D.shape[0]
+    visited = np.zeros(n, dtype=bool)
+    cur = 0
+    visited[0] = True
+    total = 0.0
+    for _ in range(n - 1):
+        row = D[cur].copy()
+        row[visited] = np.inf
+        nxt = int(np.argmin(row))
+        total += D[cur, nxt]
+        visited[nxt] = True
+        cur = nxt
+    total += D[cur, 0]
+    return float(max(total, 1e-9))
+
+
+def _aco_state(ctx, rho, cand_k=16):
+    st = ctx.get("_aco")
+    if st is not None:
+        return st
+    D = _aco_problem_dist(ctx)
+    n = D.shape[0]
+    with np.errstate(divide="ignore"):
+        eta = 1.0 / D
+    eta[~np.isfinite(eta)] = 0.0
+    np.fill_diagonal(eta, 0.0)
+    nn_len = _nn_tour_length(D)
+    tau_max = 1.0 / (rho * nn_len)
+    tau = np.full((n, n), tau_max, dtype=float)
+    np.fill_diagonal(tau, 0.0)
+    iu, ju = np.triu_indices(n, k=1)
+    keep = ~((iu == 0) & (ju == n - 1))       # drop the whole-tour reversal
+    # k-nearest-neighbour candidate lists (ACS speed-up): for each city, the
+    # `k` closest other cities, in ascending distance order.
+    k = int(max(1, min(cand_k, n - 1)))
+    cand = np.argsort(D, axis=1)[:, 1:k + 1].astype(np.int64)
+    st = {
+        "D": D, "eta": eta, "n": n,
+        "tau": tau, "rho": float(rho),
+        "best_len": nn_len,          # best tour length seen so far (for MMAS bounds)
+        "tau_max": tau_max,
+        "tau_min": tau_max / (2.0 * n),
+        "tau0": 1.0 / (n * nn_len),  # ACS local-update target (small)
+        "triu_i": iu[keep], "triu_j": ju[keep],
+        "cand": cand, "cand_k": k,
+    }
+    ctx["_aco"] = st
+    return st
+
+
+def _as_perm(ind, n):
+    """Coerce an individual to a clean Python-int list of length n; if it is
+    not a valid permutation of 0..n-1, repair it (keep first occurrences, then
+    append the missing cities in order)."""
+    seq = [int(x) for x in ind]
+    if len(seq) == n:
+        seen = set(seq)
+        if len(seen) == n and min(seen) == 0 and max(seen) == n - 1:
+            return seq
+    out, used = [], set()
+    for c in seq:
+        if 0 <= c < n and c not in used:
+            out.append(c); used.add(c)
+    for c in range(n):
+        if c not in used:
+            out.append(c)
+    return out
+
+
+def _tour_neighbours(perm, n):
+    """For each city, the set of cities adjacent to it in the cyclic tour."""
+    nb = [set() for _ in range(n)]
+    L = len(perm)
+    for i, c in enumerate(perm):
+        nb[c].add(perm[(i - 1) % L])
+        nb[c].add(perm[(i + 1) % L])
+    return nb
+
+
+def make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3, rho=0.1,
+                           cand_k=16, local_update=True, xi=0.1):
+    """ACS-style edge-recombination crossover guided by pheromone + heuristic.
+
+    Builds two child tours. Each starts from a random city and repeatedly
+    appends the next city chosen from the union of (a) the current city's tour
+    neighbours in p1 and p2 and (b) its k-nearest-neighbour candidate list,
+    restricted to unvisited cities; if that set is empty, every unvisited city
+    is a candidate. The choice uses Ant Colony System's pseudo-random-
+    proportional rule on weights tau[cur][j]^alpha * eta[cur][j]^beta: with
+    probability q0 exploit the argmax, otherwise sample roulette-wise.
+
+    When `local_update` is set, ACS's online step-by-step pheromone update is
+    applied to each chosen edge: tau_ij <- (1-xi)*tau_ij + xi*tau0 (clamped to
+    >= tau_min). This drains pheromone from edges already used during this
+    generation's matings, nudging later constructions toward other edges.
+    """
+    def crossover_aco(p1, p2, ctx):
+        rng = ctx["rng"]
+        st = _aco_state(ctx, rho, cand_k=cand_k)
+        n = st["n"]
+        tau, eta, cand_lists = st["tau"], st["eta"], st["cand"]
+        tau0 = st["tau0"]
+        a = _as_perm(p1, n)
+        b = _as_perm(p2, n)
+        nb_a = _tour_neighbours(a, n)
+        nb_b = _tour_neighbours(b, n)
+
+        def construct(start):
+            visited = np.zeros(n, dtype=bool)
+            tour = [start]
+            visited[start] = True
+            cur = start
+            all_cities = np.arange(n)
+            for _ in range(n - 1):
+                pool = nb_a[cur] | nb_b[cur]
+                pool.update(int(c) for c in cand_lists[cur])
+                cand = [c for c in pool if not visited[c]]
+                if not cand:
+                    cand = all_cities[~visited].tolist()
+                cand = np.asarray(cand, dtype=int)
+                w = (tau[cur, cand] ** alpha) * (eta[cur, cand] ** beta)
+                tot = float(w.sum())
+                if not np.isfinite(tot) or tot <= 0.0:
+                    nxt = int(cand[rng.integers(0, len(cand))])
+                elif rng.random() < q0:
+                    nxt = int(cand[int(np.argmax(w))])
+                else:
+                    nxt = int(cand[rng.choice(len(cand), p=w / tot)])
+                if local_update:
+                    nv = max((1.0 - xi) * tau[cur, nxt] + xi * tau0,
+                             st["tau_min"])
+                    tau[cur, nxt] = nv
+                    tau[nxt, cur] = nv
+                tour.append(nxt)
+                visited[nxt] = True
+                cur = nxt
+            return tour
+
+        c1 = construct(int(a[0]))
+        c2 = construct(int(rng.integers(0, n)))
+        return c1, c2
+
+    crossover_aco.__name__ = (
+        f"aco_recomb_a{alpha:g}_b{beta:g}_q{q0:g}"
+        f"_k{cand_k}{'_lu' if local_update else ''}"
+    )
+    return crossover_aco
+
+
+def _two_opt_best_move(tour, D, iu, ju):
+    """Return (i, j, delta) of the best (most-negative-delta) 2-opt move that
+    reverses tour[i+1 .. j], or None if no improving move exists. `iu, ju` are
+    the precomputed upper-triangle position-pair indices (whole-tour reversal
+    already excluded). Fully vectorised: O(n^2) time and memory.
+    """
+    t = np.asarray(tour, dtype=np.int64)
+    tn = np.roll(t, -1)                       # successor of each position
+    e = D[t, tn]                              # length of edge leaving position i
+    a, b = t[iu], tn[iu]                      # edge (a, b) at position iu
+    c, d = t[ju], tn[ju]                      # edge (c, d) at position ju
+    g = D[a, c] + D[b, d] - e[iu] - e[ju]
+    k = int(np.argmin(g))
+    if g[k] >= -1e-9:
+        return None
+    return int(iu[k]), int(ju[k]), float(g[k])
+
+
+def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
+                    deposit_q=1.0, deposit_scheme="mmas",
+                    asrank_w=6, eas_e=None, cand_k=16):
+    """Per-generation refine: 2-opt local search on the elite, then a global
+    pheromone update. Shares ctx['_aco'] with the crossover.
+
+    `two_opt_max_moves` caps accepted 2-opt moves per individual per
+    generation (default: n // 8, min 5). Each accepted move costs 1 FE.
+
+    `deposit_scheme` selects how the (evaporated) pheromone matrix is
+    reinforced:
+      - "mmas"   : iteration-best and global-best tours each deposit 1/length
+                   (MAX-MIN Ant System).
+      - "asrank" : the (w-1) best tours in the population deposit
+                   (w-r)/length_r for ranks r = 1..w-1; the global-best tour
+                   deposits w/length_gb (rank-based Ant System).
+      - "eas"    : every population member deposits 1/length (classic Ant
+                   System), and the global-best tour additionally deposits
+                   e/length_gb (Elitist Ant System; default e = n).
+    After deposition the matrix is clamped to [tau_max/(2n), tau_max] with
+    tau_max = 1/(rho * best_length_so_far), keeping every scheme bounded.
+    """
+    scheme = str(deposit_scheme).lower()
+    if scheme not in ("mmas", "asrank", "eas"):
+        raise ValueError(f"unknown deposit_scheme: {deposit_scheme!r}")
+
+    def refine_aco(population, ctx):
+        st = _aco_state(ctx, rho, cand_k=cand_k)
+        n = st["n"]
+        D = st["D"]
+        eval_counter = ctx.get("eval_counter")
+        max_fes = ctx.get("max_fes", float("inf"))
+        cap = two_opt_max_moves if two_opt_max_moves is not None else max(5, n // 8)
+        iu, ju = st["triu_i"], st["triu_j"]
+
+        # ---- 2-opt on the top-k individuals (memetic step) ----
+        order = sorted(range(len(population)),
+                       key=lambda i: population[i].fitness.values[0])
+        for idx in order[:max(0, two_opt_top_k)]:
+            if eval_counter is not None and eval_counter[0] >= max_fes:
+                break
+            ind = population[idx]
+            tour = _as_perm(ind, n)
+            cur_len = float(ind.fitness.values[0])
+            moves = 0
+            while moves < cap:
+                if eval_counter is not None and eval_counter[0] >= max_fes:
+                    break
+                mv = _two_opt_best_move(tour, D, iu, ju)
+                if mv is None:
+                    break
+                i, j, delta = mv
+                tour[i + 1:j + 1] = tour[i + 1:j + 1][::-1]
+                cur_len += delta
+                moves += 1
+                if eval_counter is not None:
+                    eval_counter[0] += 1
+            if moves:
+                ind[:] = tour
+                ind.fitness.values = (cur_len,)
+
+        # ---- global pheromone update: evaporate, then scheme-specific deposit ----
+        tau = st["tau"]
+        tau *= (1.0 - st["rho"])
+
+        def _len(perm):
+            p = np.asarray(perm)
+            return float(D[p, np.roll(p, -1)].sum())
+
+        def deposit(perm_like, amount):
+            perm = _as_perm(perm_like, n)
+            p = np.asarray(perm)
+            q = np.roll(p, -1)
+            tau[p, q] += amount
+            tau[q, p] += amount
+
+        ranked = sorted(population, key=lambda x: x.fitness.values[0])
+        iter_best = ranked[0]
+        best_so_far = ctx.get("best_so_far")
+        gb = best_so_far if best_so_far is not None else iter_best
+        len_gb = _len(_as_perm(gb, n))
+        st["best_len"] = min(st["best_len"], len_gb, _len(_as_perm(iter_best, n)))
+
+        if scheme == "mmas":
+            li = _len(_as_perm(iter_best, n))
+            if li > 0:
+                deposit(iter_best, deposit_q / li)
+            if len_gb > 0:
+                deposit(gb, deposit_q / len_gb)
+        elif scheme == "asrank":
+            w = int(max(2, asrank_w))
+            for r, ind in enumerate(ranked[:w - 1], start=1):
+                length = _len(_as_perm(ind, n))
+                if length > 0:
+                    deposit(ind, deposit_q * (w - r) / length)
+            if len_gb > 0:
+                deposit(gb, deposit_q * w / len_gb)
+        else:  # "eas"
+            for ind in population:
+                length = _len(_as_perm(ind, n))
+                if length > 0:
+                    deposit(ind, deposit_q / length)
+            e = float(eas_e) if eas_e is not None else float(n)
+            if len_gb > 0:
+                deposit(gb, e * deposit_q / len_gb)
+
+        # MMAS-style bounds, refreshed from the best length seen so far.
+        st["tau_max"] = 1.0 / (st["rho"] * max(st["best_len"], 1e-9))
+        st["tau_min"] = st["tau_max"] / (2.0 * n)
+        st["tau0"] = 1.0 / (n * max(st["best_len"], 1e-9))
+        np.clip(tau, st["tau_min"], st["tau_max"], out=tau)
+        np.fill_diagonal(tau, 0.0)
+        return population
+
+    refine_aco.__name__ = f"aco_refine_2opt{two_opt_top_k}_{scheme}_rho{rho:g}"
+    return refine_aco
