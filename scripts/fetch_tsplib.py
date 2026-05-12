@@ -1,9 +1,9 @@
 """
-Download the five baseline TSPLIB instances used by the TSP suite.
+Download the TSPLIB EUC_2D instances used by the TSP suite.
 
 Files are written to `data/tsplib/` (or `$TSPLIB_DIR` if set) under their
-canonical TSPLIB names: eil51.tsp, berlin52.tsp, kroA100.tsp, ch150.tsp,
-kroA200.tsp.
+canonical TSPLIB names: st70.tsp, eil51.tsp, berlin52.tsp, kroA100.tsp,
+ch150.tsp, kroA200.tsp — i.e. every instance listed in configs/tsp.json.
 
 Source: the official TSPLIB-95 mirror at the University of Heidelberg
 (http://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/). Files are
@@ -20,7 +20,8 @@ import sys
 import urllib.request
 from pathlib import Path
 
-INSTANCES = ["eil51", "berlin52", "kroA100", "ch150", "kroA200"]
+# Keep in sync with TSPLIB_FUNCS in src/benchmarks/tsp.py / configs/tsp.json.
+INSTANCES = ["st70", "eil51", "berlin52", "kroA100", "ch150", "kroA200"]
 # Stable GitHub mirror of the TSPLIB-95 TSP archive (uncompressed .tsp files).
 # Falls back to the Heidelberg origin if the mirror is unavailable.
 MIRRORS = [
