@@ -191,6 +191,10 @@ VARIANTS = [
          refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
                                      deposit_scheme="eas", cand_k=16),
          encodings=PERM),
+    # The TSP suite baseline now *is* EAX (Edge Assembly Crossover), so an
+    # explicit "+EAX" variant would just duplicate it. Keep an OX variant so
+    # the pre-EAX crossover stays reachable as an ablation point.
+    Spec("SGA+OX_crossover", crossover=feat.crossover_ox, encodings=PERM),
 ]
 
 

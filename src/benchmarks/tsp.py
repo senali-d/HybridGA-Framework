@@ -25,6 +25,7 @@ import numpy as np
 # Known optima (closed-tour length under TSPLIB EUC_2D rounding).
 # Source: TSPLIB-95 "Best known solutions for symmetric TSPs" page.
 _TSPLIB_OPTIMA = {
+    "st70":     675,
     "eil51":    426,
     "berlin52": 7542,
     "kroA100":  21282,
@@ -160,8 +161,9 @@ def _make_instance(name):
     return cls
 
 
-# Registry: order matches the spec in configs/tsp.json.
+# Registry: order matches the spec in configs/tsp.json (plus st70).
 TSPLIB_FUNCS = [
+    ("st70",     _make_instance("st70")),
     ("eil51",    _make_instance("eil51")),
     ("berlin52", _make_instance("berlin52")),
     ("kroA100",  _make_instance("kroA100")),

@@ -8,11 +8,12 @@
   "n_runs": 30,
   "init":      {"kind": "random_permutation"},
   "selection": {"kind": "tournament", "k": 2},
-  "crossover": {"kind": "ox", "pc": 0.9},
+  "crossover": {"kind": "eax", "pc": 0.9},
+  "_crossover_note": "Edge Assembly Crossover (single-AB-cycle). Replaced OX as the baseline crossover: under an identical GA (perm init, binary tournament, swap/inversion mutation, 1-elitism, pop=100, 50k FEs) EAX beat OX on every instance — e.g. st70 mean tour 707.5 (+4.8%) vs 1802.7 (+167%), Wilcoxon p ≈ 2e-9.",
   "mutation":  {"kind": "swap", "pm": 0.02, "alt": "inversion"},
   "elitism": {"k": 1},
   "stopping": "fe_budget",
   "_stopping_note": "Halt at 500 generations × pop_size = 50,000 cumulative function evaluations. The runner currently supports FE-budget stopping only; max_generations is recorded for documentation.",
-  "instances": ["eil51", "berlin52", "kroA100", "ch150", "kroA200"],
+  "instances": ["st70", "eil51", "berlin52", "kroA100", "ch150", "kroA200"],
   "_note": "Run scripts/fetch_tsplib.py once to populate data/tsplib/ before --suite tsp."
 }

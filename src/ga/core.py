@@ -201,6 +201,12 @@ def make_crossover(spec):
             return c1, c2
         _cx.__name__ = "ox"
         return _cx
+    if kind == "eax":
+        # Edge Assembly Crossover (single-AB-cycle) for permutation/TSP.
+        # Implemented in ga.features; imported lazily to keep ga.core free of
+        # a hard dependency on the feature library.
+        from ga import features as feat
+        return feat.make_eax()
     raise ValueError(f"unknown crossover kind: {kind!r}")
 
 

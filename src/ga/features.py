@@ -2912,3 +2912,244 @@ def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
 
     refine_aco.__name__ = f"aco_refine_2opt{two_opt_top_k}_{scheme}_rho{rho:g}"
     return refine_aco
+
+
+# ============================================================================
+# F86 — EAX: Edge Assembly Crossover for permutation/TSP (Nagata & Kobayashi)
+# ============================================================================
+#
+# Single-AB-cycle ("E-set type: single") variant. Given two parent tours A and
+# B:
+#   1. Form the multigraph G_AB = (A-edges) ∪ (B-edges); every city has
+#      A-degree 2 and B-degree 2.
+#   2. Decompose G_AB into AB-cycles: closed walks that strictly alternate an
+#      A-edge then a B-edge. (Always possible — the multigraph is AB-balanced.)
+#   3. Pick one non-trivial AB-cycle at random as the E-set.
+#   4. Intermediate child edge set = (A-edges \ {A-edges in the E-set})
+#      ∪ {B-edges in the E-set}. This stays 2-regular, so it is a disjoint
+#      union of one or more sub-tours.
+#   5. If it is a single tour, that is the child. Otherwise, repeatedly merge
+#      the smallest sub-tour into another one with the cheapest 2-edge
+#      reconnection (uses the distance matrix when available), until one tour
+#      remains.
+# Falls back to copying the parents if a degenerate E-set would create a
+# doubled edge (rare; happens only with certain shared-edge configurations).
+#
+# Mutation/selection/etc. are inherited from the suite baseline; the EAX
+# variant simply swaps OX -> EAX in the crossover slot.
+
+
+def _perm_adj_lists(perm):
+    """city -> [prev_in_tour, next_in_tour] for a cyclic permutation."""
+    n = len(perm)
+    adj = {}
+    for i, c in enumerate(perm):
+        adj[c] = [perm[(i - 1) % n], perm[(i + 1) % n]]
+    return adj
+
+
+def _ab_cycles(A, B, n):
+    """Decompose the A∪B multigraph into AB-cycles. Returns a list of cycles,
+    each a list of edges [('A'|'B', u, v), ...] alternating A,B,A,B,..."""
+    # Mutable adjacency multilists for A-edges and B-edges.
+    aA = {c: list(v) for c, v in _perm_adj_lists(A).items()}
+    aB = {c: list(v) for c, v in _perm_adj_lists(B).items()}
+
+    def _take(adj, u, v=None):
+        """Remove one edge incident to u (to v if given) from `adj`; return
+        the other endpoint."""
+        lst = adj[u]
+        if v is None:
+            v = lst[0]
+        lst.remove(v)
+        adj[v].remove(u)
+        return v
+
+    cycles = []
+    # Process A-edges until none remain.
+    remaining_A = sum(len(v) for v in aA.values()) // 2
+    while remaining_A > 0:
+        # Find a start vertex with an unused A-edge.
+        s = next(c for c in range(n) if aA[c])
+        edges = []
+        cur = s
+        while True:
+            x = _take(aA, cur)           # A-edge cur -> x
+            edges.append(("A", cur, x))
+            y = _take(aB, x)             # B-edge x -> y
+            edges.append(("B", x, y))
+            cur = y
+            if cur == s:
+                break
+        remaining_A -= len(edges) // 2
+        cycles.append(edges)
+    return cycles
+
+
+def _build_child_adj(A, eset_edges, n):
+    """Apply an E-set to A's edge set: drop the E-set's A-edges, add its
+    B-edges. Returns the child adjacency dict, or None if it is not 2-regular
+    (degenerate / doubled edge)."""
+    adj = {c: list(v) for c, v in _perm_adj_lists(A).items()}
+    for kind, u, v in eset_edges:
+        if kind == "A":
+            if v in adj[u]:
+                adj[u].remove(v)
+            if u in adj[v]:
+                adj[v].remove(u)
+        else:  # "B"
+            adj[u].append(v)
+            adj[v].append(u)
+    for c in range(n):
+        nb = adj[c]
+        if len(nb) != 2 or nb[0] == nb[1]:
+            return None
+    return adj
+
+
+def _subtours_from_adj(adj, n):
+    """Trace the 2-regular graph `adj` into a list of cycles (each a list of
+    cities in tour order)."""
+    seen = [False] * n
+    cycles = []
+    for s in range(n):
+        if seen[s]:
+            continue
+        cyc = [s]
+        seen[s] = True
+        prev, cur = None, s
+        while True:
+            a, b = adj[cur]
+            nxt = b if a == prev else a
+            if nxt == s:
+                break
+            cyc.append(nxt)
+            seen[nxt] = True
+            prev, cur = cur, nxt
+        cycles.append(cyc)
+    return cycles
+
+
+def _merge_subtours(subtours, D, rng):
+    """Greedily merge a list of disjoint sub-tours (each a city-ordered cycle)
+    into one Hamiltonian tour. At each step the smallest sub-tour is fused into
+    another with the cheapest valid 2-edge reconnection."""
+    # Represent each sub-tour as its edge list (unordered pairs) for easy
+    # reconnection bookkeeping; rebuild order at the end.
+    tours = [list(t) for t in subtours]
+
+    def _edges(t):
+        return [(t[i], t[(i + 1) % len(t)]) for i in range(len(t))]
+
+    while len(tours) > 1:
+        tours.sort(key=len)
+        small = tours[0]
+        s_edges = _edges(small)
+        best = None  # (delta, idx_other, e_small, e_other, pairing)
+        for oi in range(1, len(tours)):
+            other = tours[oi]
+            o_edges = _edges(other)
+            for (a, b) in s_edges:
+                for (c, d) in o_edges:
+                    if D is not None:
+                        d1 = D[a, c] + D[b, d] - D[a, b] - D[c, d]
+                        d2 = D[a, d] + D[b, c] - D[a, b] - D[c, d]
+                    else:
+                        d1, d2 = 0.0, 1.0
+                    if d1 <= d2:
+                        cand = (float(d1), oi, (a, b), (c, d), 1)
+                    else:
+                        cand = (float(d2), oi, (a, b), (c, d), 2)
+                    if best is None or cand[0] < best[0]:
+                        best = cand
+            if D is None:
+                break  # arbitrary merge; first other is fine
+        _, oi, (a, b), (c, d), pairing = best
+        other = tours[oi]
+        # New edge set for the merged tour.
+        new_edges = set()
+        for e in s_edges:
+            if {e[0], e[1]} != {a, b}:
+                new_edges.add(frozenset(e))
+        for e in _edges(other):
+            if {e[0], e[1]} != {c, d}:
+                new_edges.add(frozenset(e))
+        if pairing == 1:
+            new_edges.add(frozenset((a, c)))
+            new_edges.add(frozenset((b, d)))
+        else:
+            new_edges.add(frozenset((a, d)))
+            new_edges.add(frozenset((b, c)))
+        # Trace the merged cycle.
+        adj = {}
+        for e in new_edges:
+            u, v = tuple(e)
+            adj.setdefault(u, []).append(v)
+            adj.setdefault(v, []).append(u)
+        start = next(iter(adj))
+        merged = [start]
+        prev, cur = None, start
+        while True:
+            x, y = adj[cur]
+            nxt = y if x == prev else x
+            if nxt == start:
+                break
+            merged.append(nxt)
+            prev, cur = cur, nxt
+        tours = [t for k, t in enumerate(tours) if k not in (0, oi)] + [merged]
+    return tours[0]
+
+
+def make_eax():
+    """Edge Assembly Crossover (single-AB-cycle variant). Produces two
+    children; each is built from an independently chosen random AB-cycle."""
+    def crossover_eax(p1, p2, ctx):
+        rng = ctx["rng"]
+        problem = ctx.get("problem")
+        n = int(getattr(problem, "ndim", 0)) or len(p1)
+        D = getattr(problem, "dist", None)
+        if D is not None:
+            D = np.asarray(D, dtype=float)
+        A = _as_perm(p1, n)
+        B = _as_perm(p2, n)
+        if n < 4 or A == B:
+            return list(A), list(B)
+        try:
+            cycles = _ab_cycles(A, B, n)
+        except Exception:
+            return list(A), list(B)
+        # Non-trivial cycles only (length-2 cycles are shared edges -> no-op).
+        nz = [c for c in cycles if len(c) > 2]
+        if not nz:
+            return list(A), list(B)
+
+        def one_child():
+            for c in rng.permutation(len(nz)):
+                try:
+                    adj = _build_child_adj(A, nz[int(c)], n)
+                    if adj is None:
+                        continue
+                    subs = _subtours_from_adj(adj, n)
+                    tour = (subs[0] if len(subs) == 1
+                            else _merge_subtours(subs, D, rng))
+                except Exception:
+                    continue
+                if len(tour) == n and len(set(tour)) == n:
+                    return [int(x) for x in tour]
+            return list(A)
+
+        return one_child(), one_child()
+
+    crossover_eax.__name__ = "eax_single"
+    return crossover_eax
+
+
+# ============================================================================
+# F87 — OX: Order Crossover for permutation/TSP (kept as an ablation point)
+# ============================================================================
+def crossover_ox(p1, p2, ctx):
+    """Plain Order Crossover (DEAP's cxOrdered). Exposed as a feature so the
+    old OX baseline stays reachable as the `SGA+OX_crossover` variant now that
+    the suite baseline uses EAX."""
+    c1, c2 = tools.cxOrdered(list(p1), list(p2))
+    return c1, c2

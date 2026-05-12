@@ -110,7 +110,9 @@ def test_tsp_baseline_uses_permutation_operators():
     cfg = _load("tsp")
     b = baseline_from_config(cfg, dim=51)  # eil51
     assert "k2" in b.select_fn.__name__
-    assert b.crossover_fn.__name__ == "ox"
+    # Baseline crossover is EAX (Edge Assembly Crossover); make_crossover
+    # wires {"kind": "eax"} to ga.features.make_eax().
+    assert b.crossover_fn.__name__ == "eax_single"
     assert "swap" in b.mutate_fn.__name__
     assert b.cx_prob == 0.9
     assert b.elitism_k == 1

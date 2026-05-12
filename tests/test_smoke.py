@@ -30,6 +30,15 @@ with (ROOT / "configs" / "cec2022.json").open() as _f:
 _BASELINE = baseline_from_config(_CFG, dim=10)
 _BASELINE.name = "SGA_baseline"
 VARIANTS = build_variants(_BASELINE, "real")
+
+# Permutation-suite baseline (TSP): different operator slots (EAX crossover,
+# random-permutation init, swap/inversion mutation). Used by the
+# "every feature is wired into a variant" test so encoding-specific operators
+# are covered too.
+with (ROOT / "configs" / "tsp.json").open() as _f:
+    _TSP_CFG = json.load(_f)
+_TSP_BASELINE = baseline_from_config(_TSP_CFG, dim=10)
+_TSP_BASELINE.name = "SGA_baseline"
 DIM = 10  # CEC 2022 supports {2, 10, 20}
 POP = 12
 MAX_FES = 200
@@ -107,11 +116,13 @@ def test_every_public_feature_has_a_variant():
         if obj.__module__ == "ga.features" and not name.startswith("_")
     }
 
-    # Cover every encoding so encoding-specific variants (e.g. the permutation
-    # GACO hybrid) are included, not just the real-coded ones.
+    # Cover every encoding so encoding-specific operators (EAX, the GACO
+    # hybrid, ...) are included, not just the real-coded ones. Permutation
+    # variants are built on the TSP baseline so the baseline's own perm
+    # operators (EAX crossover etc.) count as "wired in".
     all_variants = list(VARIANTS)
-    for enc in ("permutation", "discrete"):
-        all_variants += build_variants(_BASELINE, enc)
+    all_variants += build_variants(_TSP_BASELINE, "permutation")
+    all_variants += build_variants(_BASELINE, "discrete")
 
     referenced: set[str] = set()
     for v in all_variants:
