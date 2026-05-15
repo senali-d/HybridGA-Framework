@@ -59,7 +59,14 @@ class EngineeringProblem:
         raise NotImplementedError
 
     def evaluate(self, x):
-        x_c = self._canonicalize(np.asarray(x, dtype=float))
+        x_arr = np.asarray(x, dtype=float)
+        # Defensive: scrub non-finite genes before canonicalize/objective so a
+        # rogue NaN from a variant operator can't crash round()/int() casts.
+        if not np.all(np.isfinite(x_arr)):
+            mid = 0.5 * (self.lb + self.ub)
+            x_arr = np.where(np.isfinite(x_arr), x_arr, mid)
+        x_arr = np.clip(x_arr, self.lb, self.ub)
+        x_c = self._canonicalize(x_arr)
         f = float(self._objective(x_c))
         g = np.asarray(self.constraints(x_c), dtype=float)
         v = float(np.sum(np.maximum(g, 0.0)))
@@ -128,8 +135,8 @@ class PressureVessel(EngineeringProblem):
 
     def _canonicalize(self, x):
         x = np.array(x, dtype=float)
-        x[0] = 0.0625 * round(x[0])
-        x[1] = 0.0625 * round(x[1])
+        x[0] = 0.0625 * int(np.round(x[0]))
+        x[1] = 0.0625 * int(np.round(x[1]))
         return x
 
     def _objective(self, x):

@@ -302,6 +302,15 @@ def apply_bounds(vec, lb, ub, mode="clip", rng=None):
     "reinit"  — replace out-of-bounds genes with uniform samples in [lb, ub].
     """
     arr = np.asarray(vec, dtype=float)
+    # Scrub non-finite genes (NaN/±inf) that variant operators (GSA, SHADE,
+    # Lévy-flight, divisions by ~0, etc.) can occasionally produce. Replace
+    # with a fresh in-bounds uniform draw so downstream code never sees NaN.
+    if mode != "passthrough":
+        bad = ~np.isfinite(arr)
+        if np.any(bad):
+            _rng = rng if rng is not None else np.random.default_rng()
+            fresh = _rng.uniform(lb, ub)
+            arr = np.where(bad, fresh, arr)
     if mode == "clip":
         return np.clip(arr, lb, ub).tolist()
     if mode == "reflect":
