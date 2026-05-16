@@ -69,13 +69,7 @@ class ExperimentRecorder:
         self.exp_dir = self.out_root / name
         # If this tag dir already exists, wipe stale outputs so a re-run
         # cannot blend with a previous batch's runs/history/summary/plots.
-        if self.exp_dir.exists() and any(
-            (self.exp_dir / s).exists()
-            for s in ("runs.parquet", "history.parquet", "summary", "plots")
-        ):
-            print(f"[recorder] reusing existing tag dir {self.exp_dir} — "
-                  f"wiping prior runs.parquet/history.parquet/summary/plots",
-                  file=sys.stderr)
+        if self.exp_dir.exists():
             for stale in ("runs.parquet", "history.parquet", "config.json"):
                 p = self.exp_dir / stale
                 if p.exists():
