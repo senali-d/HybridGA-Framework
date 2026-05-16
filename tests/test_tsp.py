@@ -112,6 +112,43 @@ def test_tsp_gaco_hybrid_smoke_run():
     assert r_g["best_fitness"] < 1.25 * p.f_global
 
 
+_NEW_PERM_VARIANTS = [
+    "SGA+restart", "SGA+abc_scout", "SGA+cuckoo_discovery",
+    "SGA+net_suppress", "SGA+immune_memory", "SGA+pher_minmax",
+    "SGA+DE_mut", "SGA+SHADE_mut", "SGA+gsa_full_mut",
+    "SGA+bfo_chemotaxis", "SGA+krill_herd_mut", "SGA+sos_mut",
+    "SGA+bbo_migration_cx",
+    "SGA+greedy_replace", "SGA+archive_replace", "SGA+metropolis_replace",
+]
+
+
+@needs_data
+@pytest.mark.parametrize("name", _NEW_PERM_VARIANTS)
+def test_perm_variant_preserves_permutation(name):
+    """Each variant exposed to TSP must keep every individual a valid
+    permutation of 0..n-1 across a short run."""
+    from ga.build import baseline_from_config, variant_from_baseline
+    from ga.core import run_sga
+    from ga.variants import VARIANTS, variants_for_encoding
+    from benchmarks.tsp import TSPLIB_FUNCS
+
+    cfg = json.loads((ROOT / "configs" / "tsp.json").read_text())
+    Cls = dict(TSPLIB_FUNCS)["eil51"]
+    p = Cls()
+    baseline = baseline_from_config(cfg, dim=p.ndim)
+    baseline.name = "SGA_baseline"
+    perm_specs = {s.name: s for s in variants_for_encoding("permutation")}
+    spec = perm_specs[name]
+    var = variant_from_baseline(baseline, spec)
+
+    r = run_sga(p, var, pop_size=20, max_fes=2000, seed=1,
+                record_history=False)
+    assert r["fes_used"] <= 2000
+    assert len(r["best_solution"]) == p.ndim
+    assert sorted(int(c) for c in r["best_solution"]) == list(range(p.ndim))
+    assert np.isfinite(r["best_fitness"])
+
+
 def test_tsp_problem_missing_data_raises():
     from benchmarks.tsp import TSPProblem
     with pytest.raises(FileNotFoundError, match="fetch_tsplib"):

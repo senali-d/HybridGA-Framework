@@ -3219,3 +3219,654 @@ def make_aco_guided_mutation(seg_frac=0.2, seg_prob=0.5, alpha=1.0, beta=3.0,
 
     mutate_aco_guided.__name__ = f"aco_guided_mut_seg{seg_frac:g}_p{seg_prob:g}"
     return mutate_aco_guided
+
+
+# ============================================================================
+# F86 — Permutation-aware re-init / diversity factories (TSP)
+# ============================================================================
+#
+# Direct perm-aware factories that mirror their real-coded counterparts but
+# (a) re-initialise with random permutations instead of uniform draws in
+# [lb, ub], and (b) measure individual-to-individual distance with edge-set
+# Jaccard rather than Euclidean. Used for the five re-init / distance-
+# diversity operators (restart, abc_scout, cuckoo_discovery, net_suppress,
+# immune_memory). The seven gene-arithmetic features (DE, SHADE, GSA, BFO,
+# krill, SOS, BBO) have edge-aware TSP-native rewrites in F87–F93 below.
+
+
+def _random_perm(n, rng):
+    """Random permutation of 0..n-1 as a plain Python-int list."""
+    p = np.arange(n)
+    rng.shuffle(p)
+    return p.tolist()
+
+
+def _edges(perm):
+    """Undirected edge set of a cyclic TSP tour, with unordered pairs."""
+    n = len(perm)
+    s = set()
+    for i in range(n):
+        a = int(perm[i]); b = int(perm[(i + 1) % n])
+        s.add((a, b) if a < b else (b, a))
+    return s
+
+
+def _edge_jaccard_dist(p, q):
+    """1 - |edges(p) ∩ edges(q)| / |edges(p) ∪ edges(q)|. Returns in [0, 1]."""
+    ep, eq = _edges(p), _edges(q)
+    union = len(ep | eq)
+    if union == 0:
+        return 0.0
+    return 1.0 - len(ep & eq) / union
+
+
+def make_diversity_restart_perm(stagnation_threshold=20, restart_fraction=0.2):
+    """Perm analogue of make_diversity_restart: replace worst k% with random
+    permutations once stagnation_counter crosses the threshold."""
+    def diversity_restart_perm(population, ctx):
+        if ctx["stagnation_counter"] < stagnation_threshold:
+            return population
+        rng = ctx["rng"]
+        n_restart = int(len(population) * restart_fraction)
+        if n_restart <= 0:
+            return population
+        sorted_pop = sorted(population, key=lambda x: x.fitness.values[0])
+        keep = sorted_pop[: len(population) - n_restart]
+        fresh = []
+        for _ in range(n_restart):
+            v = _random_perm(int(ctx["dim"]), rng)
+            fresh.append(creator.Individual(v))
+        ctx["stagnation_counter"] = 0
+        return keep + fresh
+    return diversity_restart_perm
+
+
+def make_abc_scout_perm(limit=None):
+    """Perm analogue of make_abc_scout: trial-counter scout abandonment, but
+    abandoned slots are reinitialised with a random permutation."""
+    def replace_abc_perm(parents, offspring, ctx):
+        rng = ctx["rng"]
+        dim = int(ctx["dim"])
+        pop_size = ctx["pop_size"]
+        lim = limit if limit is not None else max(1, pop_size * dim)
+
+        survivors = generational_elitism(parents, offspring, int(ctx["elitism_k"]))
+
+        parents_by_f = sorted(parents, key=lambda x: x.fitness.values[0])
+        offspring_by_f = sorted(offspring, key=lambda x: x.fitness.values[0])
+        m = min(len(parents_by_f), len(offspring_by_f))
+        improved_ids = set()
+        unimproved_ids = set()
+        for i in range(m):
+            p = parents_by_f[i]
+            o = offspring_by_f[i]
+            if o.fitness.values[0] < p.fitness.values[0]:
+                improved_ids.add(id(p))
+            else:
+                unimproved_ids.add(id(p))
+
+        for ind in survivors:
+            t = getattr(ind, "trial", 0)
+            if id(ind) in improved_ids:
+                ind.trial = 0
+            elif id(ind) in unimproved_ids:
+                ind.trial = t + 1
+            else:
+                ind.trial = 0
+
+        for i, ind in enumerate(survivors):
+            if getattr(ind, "trial", 0) > lim:
+                scout = creator.Individual(_random_perm(dim, rng))
+                scout.age = 0
+                scout.trial = 0
+                survivors[i] = scout
+        return survivors
+    return replace_abc_perm
+
+
+def make_cuckoo_discovery_perm(pa=0.25):
+    """Perm analogue of make_cuckoo_discovery: with probability pa, replace
+    a nest with a random permutation (the perm-native form of biased-walk
+    discovery, since on a tour there is no meaningful (xj - xk) vector)."""
+    def diversity_cuckoo_perm(population, ctx):
+        rng = ctx["rng"]
+        dim = int(ctx["dim"])
+        for i in range(len(population)):
+            if rng.random() >= pa:
+                continue
+            new_ind = creator.Individual(_random_perm(dim, rng))
+            new_ind.age = 0
+            population[i] = new_ind
+        return population
+    return diversity_cuckoo_perm
+
+
+def make_network_suppression_perm(threshold_frac=0.02):
+    """Perm analogue of make_network_suppression. Distance is edge-set
+    Jaccard; threshold_frac is the *minimum* fraction of disagreeing edges
+    below which two tours are considered too similar (worse is dropped)."""
+    def diversity_suppress_perm(population, ctx):
+        rng = ctx["rng"]
+        dim = int(ctx["dim"])
+        thr = float(threshold_frac)
+        pop = list(population)
+        # Pre-compute edge sets once per generation.
+        perms = [_as_perm(p, dim) for p in pop]
+        edge_sets = [_edges(p) for p in perms]
+        keep_mask = [True] * len(pop)
+        for i in range(len(pop)):
+            if not keep_mask[i]:
+                continue
+            for j in range(i + 1, len(pop)):
+                if not keep_mask[j]:
+                    continue
+                ep, eq = edge_sets[i], edge_sets[j]
+                union = len(ep | eq)
+                d = 1.0 - len(ep & eq) / union if union else 0.0
+                if d < thr:
+                    worse = i if pop[i].fitness.values[0] > pop[j].fitness.values[0] else j
+                    keep_mask[worse] = False
+        out = [pop[i] for i in range(len(pop)) if keep_mask[i]]
+        n_drop = len(pop) - len(out)
+        for _ in range(n_drop):
+            out.append(creator.Individual(_random_perm(dim, rng)))
+        return out
+    return diversity_suppress_perm
+
+
+def make_immune_memory_pool_perm(k_inject=2, dist_thresh_frac=0.05):
+    """Perm analogue of make_immune_memory_pool: novelty is measured by
+    edge-set Jaccard distance to existing memory members."""
+    def diversity_immune_perm(population, ctx):
+        dim = int(ctx["dim"])
+        memory = ctx.setdefault("immune_memory_perm_pool", [])
+        thr = float(dist_thresh_frac)
+        cur_best = _best_in_pop(population)
+        cur_perm = _as_perm(cur_best, dim)
+        if not memory:
+            mc = creator.Individual(list(cur_best))
+            mc.fitness.values = cur_best.fitness.values
+            memory.append(mc)
+        else:
+            min_d = min(_edge_jaccard_dist(cur_perm, _as_perm(m, dim)) for m in memory)
+            if min_d > thr and len(memory) < 20:
+                mc = creator.Individual(list(cur_best))
+                mc.fitness.values = cur_best.fitness.values
+                memory.append(mc)
+        if not memory:
+            return population
+        sorted_pop = _sorted_pop(population)
+        n_inject = min(k_inject, len(memory), len(population) // 2)
+        if n_inject <= 0:
+            return population
+        keep = sorted_pop[: len(population) - n_inject]
+        injected = []
+        for m in memory[-n_inject:]:
+            clone = creator.Individual(list(m))
+            clone.fitness.values = m.fitness.values
+            injected.append(clone)
+        return keep + injected
+    return diversity_immune_perm
+
+
+# ============================================================================
+# F87–F93 — TSP-native (edge-aware) versions of the real-coded variants
+# ============================================================================
+#
+# Each operator below keeps the *metaphor* of the real-coded feature it is
+# named after, but the mathematical update is rewritten in the language of
+# tours and edges so the operator actually exploits TSP problem structure
+# (city adjacency, distance matrix, candidate lists, edge sets) rather than
+# coerced floats.
+#
+# Common pattern:
+#   - Inputs are valid permutations (run through _as_perm for safety).
+#   - "Difference between two tours" is an edge-set delta (F87/F88/F91/F92/F93).
+#   - "Gravity / attraction" becomes mass-weighted edge voting (F89).
+#   - "Step in a direction" becomes a 2-opt move, optionally restricted to
+#     k-nearest-neighbour candidate lists (F90).
+#   - Operator parameters (F, CR, G0, alpha, Vf, ...) carry their original
+#     meanings whenever the analogue is exact, so SHADE's adaptive F/CR
+#     memory in ctx["shade_memory"] still drives F88 unchanged.
+
+
+def _two_opt_delta(perm, D, i, j):
+    """Distance delta for the 2-opt move that reverses perm[i:j+1]. The
+    affected edges are (perm[i-1], perm[i]) and (perm[j], perm[j+1 mod n])."""
+    n = len(perm)
+    a = perm[i - 1]; b = perm[i]
+    c = perm[j];     d = perm[(j + 1) % n]
+    return D[a, c] + D[b, d] - D[a, b] - D[c, d]
+
+
+def _ox_insert_segment(target, segment, insert_pos):
+    """OX-style insertion: drop every city in `segment` from a copy of
+    `target`, then re-insert `segment` contiguously at `insert_pos`.
+    Returned permutation has the same length as `target` and is valid."""
+    seg_set = set(int(c) for c in segment)
+    rest = [int(c) for c in target if int(c) not in seg_set]
+    insert_pos = max(0, min(insert_pos, len(rest)))
+    return rest[:insert_pos] + [int(c) for c in segment] + rest[insert_pos:]
+
+
+# ----------------------------------------------------------------------------
+# Edge-based DE helpers
+# ----------------------------------------------------------------------------
+# Apply an edge (a, b) to a tour via a single 2-opt reversal. If `a` and `b`
+# sit at positions ia < ib in the tour, reversing the segment perm[ia+1:ib+1]
+# places `perm[ia]` adjacent to `perm[ib]` — i.e. introduces edge (a, b).
+# Returns True if the edge was inserted, False if the move is degenerate
+# (positions adjacent or coincident).
+
+def _insert_edge_2opt(perm, a, b):
+    try:
+        ia = perm.index(int(a)); ib = perm.index(int(b))
+    except ValueError:
+        return False
+    lo, hi = (ia, ib) if ia < ib else (ib, ia)
+    if hi - lo < 2:
+        return False
+    perm[lo + 1:hi + 1] = perm[lo + 1:hi + 1][::-1]
+    return True
+
+
+def _apply_edge_set(perm, edges, k, rng, cr=None, D=None, only_improving=False):
+    """Apply up to k edges from `edges` (an iterable of unordered (a,b)
+    pairs) to `perm` via 2-opt insertion. Each edge is independently gated
+    by Bernoulli(cr) when cr is provided. When `only_improving` is set and
+    D is available, the move is accepted only if it reduces tour length.
+    Edges are tried in randomised order so the operator is not biased by
+    the iteration order of Python sets."""
+    if k <= 0:
+        return perm
+    pool = list(edges)
+    if not pool:
+        return perm
+    rng.shuffle(pool)
+    applied = 0
+    for (a, b) in pool:
+        if cr is not None and rng.random() >= cr:
+            continue
+        if only_improving and D is not None:
+            try:
+                ia = perm.index(int(a)); ib = perm.index(int(b))
+            except ValueError:
+                continue
+            lo, hi = (ia, ib) if ia < ib else (ib, ia)
+            if hi - lo < 2:
+                continue
+            # Delta for the edge-insertion 2-opt (reverses perm[lo+1:hi+1]):
+            # removes edges (perm[lo], perm[lo+1]) and (perm[hi], perm[hi+1])
+            # and adds edges (perm[lo], perm[hi]) and (perm[lo+1], perm[hi+1]).
+            n = len(perm)
+            removed = D[perm[lo], perm[lo + 1]] + D[perm[hi], perm[(hi + 1) % n]]
+            added = D[perm[lo], perm[hi]] + D[perm[lo + 1], perm[(hi + 1) % n]]
+            if added - removed >= 0:
+                continue
+            perm[lo + 1:hi + 1] = perm[lo + 1:hi + 1][::-1]
+            applied += 1
+        else:
+            if _insert_edge_2opt(perm, a, b):
+                applied += 1
+        if applied >= k:
+            break
+    return perm
+
+
+# ----------------------------------------------------------------------------
+# F87 — Permutation DE/rand/1 (edge-based)
+# ----------------------------------------------------------------------------
+# DE/rand/1 says v = r1 + F * (r2 - r3). On a tour, the "direction" (r2 -
+# r3) is the symmetric edge difference: edges that exist in r2 but not in
+# r3 (the direction r3 -> r2 in edge space). The mutation copies r1 and
+# pushes it along that direction by injecting round(F * |donor_edges|) of
+# those edges via 2-opt reversals. Each 2-opt changes exactly two edges,
+# so F scales how many TSP-meaningful edges are inherited from the
+# differential.
+
+def make_de_perm(F=0.5):
+    def mutate_de_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        ind_id = id(ind)
+        pool_idx = [i for i, p in enumerate(pop) if id(p) != ind_id]
+        if len(pool_idx) < 3:
+            return _as_perm(ind, n)
+        picks = rng.choice(pool_idx, size=3, replace=False)
+        r1 = _as_perm(pop[int(picks[0])], n)
+        r2 = _as_perm(pop[int(picks[1])], n)
+        r3 = _as_perm(pop[int(picks[2])], n)
+        donor_edges = _edges(r2) - _edges(r3)
+        out = list(r1)
+        k = max(1, int(round(F * len(donor_edges))))
+        # Discrete DE on TSP needs an acceptance filter: with uncorrelated
+        # r2/r3 the symmetric edge difference is mostly random edges, and
+        # injecting F * |donor| of them into r1 without a filter is closer
+        # to randomisation than to "differential exploration". An improving-
+        # only 2-opt acceptance (Onwubolu & Davendra 2009 style) preserves
+        # the DE metaphor — direction = donor edges, scale = F — while
+        # restricting acceptance to TSP-meaningful moves.
+        D = None
+        try:
+            D = _aco_problem_dist(ctx)
+        except ValueError:
+            D = None
+        return _apply_edge_set(out, donor_edges, k, rng,
+                               D=D, only_improving=D is not None)
+    mutate_de_perm.__name__ = f"de_perm_edge_F{F:g}"
+    return mutate_de_perm
+
+
+# ----------------------------------------------------------------------------
+# F88 — Permutation SHADE (current-to-pbest/1, edge-based)
+# ----------------------------------------------------------------------------
+# SHADE: u = x + F*(pbest - x) + F*(r1 - r2), with F ~ Cauchy(muF, 0.1) and
+# CR ~ Normal(muCR, 0.1) drawn from a per-population memory. Permutation
+# form:
+#   * Target edges = E(pbest) \ E(cur)            (the "to pbest" direction)
+#   * Differential edges = E(r1) \ E(r2)          (the random direction)
+# Apply up to F*|target| target edges then F*|differential| differential
+# edges to a copy of `cur`. Each candidate edge is independently gated by
+# Bernoulli(CR), and acceptance is restricted to improving 2-opt moves —
+# the analogue of "u_j = v_j if rand<CR" combined with the standard SHADE
+# practice of recording F/CR only on improvement. Improving-only gives the
+# mutation a SHADE-flavoured trial-and-keep semantics without needing to
+# call the evaluator inside the mutate slot.
+
+def make_shade_perm():
+    def mutate_shade_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        if len(pop) < 4:
+            return _as_perm(ind, n)
+        mem = ctx["shade_memory"]
+        muF = float(np.mean(mem["F"]))
+        muCR = float(np.mean(mem["CR"]))
+        F = float(np.clip(rng.standard_cauchy() * 0.1 + muF, 0.05, 1.0))
+        CR = float(np.clip(rng.normal(muCR, 0.1), 0.0, 1.0))
+
+        sorted_pop = _sorted_pop(pop)
+        p_size = max(2, int(0.2 * len(sorted_pop)))
+        pbest = _as_perm(sorted_pop[int(rng.integers(0, p_size))], n)
+        idx = rng.choice(len(pop), size=2, replace=False)
+        r1 = _as_perm(pop[int(idx[0])], n)
+        r2 = _as_perm(pop[int(idx[1])], n)
+        cur = _as_perm(ind, n)
+        D = None
+        try:
+            D = _aco_problem_dist(ctx)
+        except ValueError:
+            D = None
+
+        target = _edges(pbest) - _edges(cur)
+        diff = _edges(r1) - _edges(r2)
+        k1 = max(1, int(round(F * len(target))))
+        k2 = max(1, int(round(F * len(diff))))
+        out = list(cur)
+        out = _apply_edge_set(out, target, k1, rng, cr=CR,
+                              D=D, only_improving=D is not None)
+        out = _apply_edge_set(out, diff, k2, rng, cr=CR,
+                              D=D, only_improving=D is not None)
+
+        mem["F"].append(F); mem["CR"].append(CR)
+        return out
+    return mutate_shade_perm
+
+
+# ----------------------------------------------------------------------------
+# F89 — Permutation GSA (mass-weighted edge voting + biased 2-opt)
+# ----------------------------------------------------------------------------
+# GSA: lighter masses are pulled toward heavier (fitter) ones via Newtonian
+# gravity, with the active-set Kbest shrinking over time (G(t) = G0 *
+# exp(-alpha * t/T)). Permutation form: each kbest tour casts a mass-
+# weighted vote for each of its edges; the current tour then performs
+# G(t)-many 2-opt moves where the partner `j` is sampled proportionally to
+# the edge vote with the current city. This makes the operator pull the
+# tour toward the *edge structure* of the high-mass cluster — the perm
+# analogue of being pulled in a high-gravity direction.
+
+def make_gsa_full_perm(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
+    def mutate_gsa_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        if len(pop) < 4:
+            return _as_perm(ind, n)
+        D = _aco_problem_dist(ctx)
+        t = float(ctx.get("t_ratio", 0.0))
+        # Kbest shrinks from |pop| to kbest_final_frac * |pop| over the run
+        k = max(2, int(len(pop) * (1.0 - t * (1.0 - kbest_final_frac))))
+        sorted_pop = _sorted_pop(pop)[:k]
+        fits = np.array([p.fitness.values[0] for p in sorted_pop], dtype=float)
+        span = max(float(fits.max() - fits.min()), 1e-12)
+        masses = (fits.max() - fits) / span  # heaviest = best
+        if masses.sum() <= 0:
+            return _as_perm(ind, n)
+
+        edge_vote = np.zeros((n, n), dtype=float)
+        for m_i, p in zip(masses, sorted_pop):
+            perm = _as_perm(p, n)
+            for ii in range(n):
+                a, b = perm[ii], perm[(ii + 1) % n]
+                edge_vote[a, b] += float(m_i)
+                edge_vote[b, a] += float(m_i)
+
+        cur = _as_perm(ind, n)
+        G_t = G0 * float(np.exp(-alpha * t / max(1.0, ctx.get("max_gen_estimate", 1))))
+        n_moves = max(1, min(int(G_t), max(1, n // 4)))
+        for _ in range(n_moves):
+            i = int(rng.integers(1, n - 1))
+            cur_arr = np.asarray(cur)
+            votes = edge_vote[cur_arr[i], cur_arr] + 1e-9
+            # Disallow no-op picks (immediate neighbours produce length-<2 segments)
+            votes[max(0, i - 1):min(n, i + 2)] = 0.0
+            tot = float(votes.sum())
+            if tot <= 0:
+                continue
+            j = int(rng.choice(n, p=votes / tot))
+            lo, hi = (i, j) if i < j else (j, i)
+            if hi - lo >= 2:
+                # Accept only improving 2-opt moves (gravity = bias toward
+                # lower-energy configurations).
+                if _two_opt_delta(cur, D, lo, hi) < 0:
+                    cur[lo:hi + 1] = cur[lo:hi + 1][::-1]
+        return cur
+    return mutate_gsa_perm
+
+
+# ----------------------------------------------------------------------------
+# F90 — Permutation BFO chemotaxis (2-opt swim & tumble)
+# ----------------------------------------------------------------------------
+# BFO: a tumble is a single step in a random direction; a swim is to keep
+# stepping in the same direction while fitness improves, up to N_s times.
+# Permutation form: a tumble is a 2-opt move where the partner `j` is the
+# city's k-NN candidate-list neighbour (the perm analogue of a small-
+# magnitude direction). If the tumble improves the tour, swim by trying
+# more candidate-list 2-opt moves anchored at the same position while they
+# keep improving.
+
+def make_bfo_chemotaxis_perm(N_s=4):
+    def mutate_bfo_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        st = _aco_state(ctx, rho=0.1, cand_k=16)
+        D = st["D"]
+        cand = st["cand"]
+        cur = _as_perm(ind, n)
+
+        def _candidate_2opt(anchor):
+            choices = [int(c) for c in cand[cur[anchor]] if int(c) != cur[anchor]]
+            if not choices:
+                return None
+            partner = int(rng.choice(choices))
+            try:
+                jpos = cur.index(partner)
+            except ValueError:
+                return None
+            lo, hi = (anchor, jpos) if anchor < jpos else (jpos, anchor)
+            if hi - lo < 2:
+                return None
+            return lo, hi
+
+        # Tumble
+        anchor = int(rng.integers(1, n))
+        move = _candidate_2opt(anchor)
+        if move is None:
+            return cur
+        lo, hi = move
+        if _two_opt_delta(cur, D, lo, hi) < 0:
+            cur[lo:hi + 1] = cur[lo:hi + 1][::-1]
+            # Swim while improving
+            for _ in range(N_s):
+                move = _candidate_2opt(lo)
+                if move is None:
+                    break
+                lo2, hi2 = move
+                if _two_opt_delta(cur, D, lo2, hi2) >= 0:
+                    break
+                cur[lo2:hi2 + 1] = cur[lo2:hi2 + 1][::-1]
+        return cur
+    return mutate_bfo_perm
+
+
+# ----------------------------------------------------------------------------
+# F91 — Permutation Krill Herd (food + herd attraction + random drift)
+# ----------------------------------------------------------------------------
+# Krill Herd: position update has three components — induced motion from
+# the food location (best so far), neighbour-density motion from the herd,
+# and physical diffusion (random drift). Permutation form:
+#   * Food attraction (Vf): adopt one edge from best-so-far that the
+#     current tour lacks, via 2-opt repair.
+#   * Herd cohesion (Nmax): adopt one edge from the nearest-fitness
+#     neighbour in the population.
+#   * Diffusion (Dmax): a random 2-opt move.
+# The defaults reflect the original Vf >> Nmax > Dmax ranking.
+
+def make_krill_herd_perm(Vf=0.6, Nmax=0.35, Dmax=0.2):
+    def mutate_krill_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        bs = ctx.get("best_so_far")
+        cur = _as_perm(ind, n)
+        cur_edges = _edges(cur)
+
+        def _adopt_edge_from(donor_perm):
+            diff = list(_edges(donor_perm) - _edges(cur))
+            if not diff:
+                return False
+            a, b = diff[int(rng.integers(0, len(diff)))]
+            try:
+                ia = cur.index(int(a)); ib = cur.index(int(b))
+            except ValueError:
+                return False
+            lo, hi = sorted((ia, ib))
+            if hi - lo >= 2:
+                cur[lo + 1:hi + 1] = cur[lo + 1:hi + 1][::-1]
+                return True
+            return False
+
+        if bs is not None and rng.random() < Vf:
+            _adopt_edge_from(_as_perm(bs, n))
+        if pop and rng.random() < Nmax:
+            others = [p for p in pop if id(p) != id(ind)]
+            if others:
+                try:
+                    my_f = ind.fitness.values[0]
+                    neigh = min(others, key=lambda p: abs(p.fitness.values[0] - my_f))
+                except (AttributeError, IndexError):
+                    neigh = others[int(rng.integers(0, len(others)))]
+                _adopt_edge_from(_as_perm(neigh, n))
+        if rng.random() < Dmax:
+            i, j = sorted(rng.integers(0, n, size=2).tolist())
+            if j - i >= 2:
+                cur[i:j + 1] = cur[i:j + 1][::-1]
+        return cur
+    return mutate_krill_perm
+
+
+# ----------------------------------------------------------------------------
+# F92 — Permutation SOS (mutualism / commensalism / parasitism)
+# ----------------------------------------------------------------------------
+# Symbiotic Organisms Search has three explicit interaction phases:
+#   * Mutualism (both benefit): OX-style segment exchange with a partner —
+#     the partner donates a contiguous segment, the current organism
+#     integrates it.
+#   * Commensalism (one benefits, one unchanged): the current organism
+#     adopts a single beneficial edge from the partner.
+#   * Parasitism (random sabotage): a random segment reversal.
+# Phase is chosen uniformly per call; the three together approximate the
+# original triple-step SOS generation.
+
+def make_sos_perm():
+    def mutate_sos_perm(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        cur = _as_perm(ind, n)
+        if len(pop) < 2:
+            # Parasitism only
+            a, b = sorted(rng.integers(0, n, size=2).tolist())
+            if b - a >= 2:
+                cur[a:b + 1] = cur[a:b + 1][::-1]
+            return cur
+
+        phase = int(rng.integers(0, 3))
+        if phase == 0:
+            j = int(rng.integers(0, len(pop)))
+            partner = _as_perm(pop[j], n)
+            a, b = sorted(rng.integers(0, n, size=2).tolist())
+            return _ox_insert_segment(cur, partner[a:b + 1], a)
+        if phase == 1:
+            j = int(rng.integers(0, len(pop)))
+            partner = _as_perm(pop[j], n)
+            diff = list(_edges(partner) - _edges(cur))
+            if not diff:
+                return cur
+            a, b = diff[int(rng.integers(0, len(diff)))]
+            try:
+                ia = cur.index(int(a)); ib = cur.index(int(b))
+            except ValueError:
+                return cur
+            lo, hi = sorted((ia, ib))
+            if hi - lo >= 2:
+                cur[lo + 1:hi + 1] = cur[lo + 1:hi + 1][::-1]
+            return cur
+        # Parasitism
+        a, b = sorted(rng.integers(0, n, size=2).tolist())
+        if b - a >= 2:
+            cur[a:b + 1] = cur[a:b + 1][::-1]
+        return cur
+    return mutate_sos_perm
+
+
+# ----------------------------------------------------------------------------
+# F93 — Permutation BBO migration crossover
+# ----------------------------------------------------------------------------
+# BBO: each habitat has emigration rate mu (high for fit habitats) and
+# immigration rate lambda (high for unfit habitats); features migrate from
+# high-mu to high-lambda. On permutations, a "feature" is a contiguous
+# edge segment. The fitter parent acts as donor and contributes a random
+# segment; the recipient OX-integrates it. Two children are produced with
+# donor/recipient roles swapped, mirroring the original crossover contract.
+
+def crossover_bbo_perm(p1, p2, ctx):
+    rng = ctx["rng"]
+    n = int(ctx["dim"])
+    a = _as_perm(p1, n); b = _as_perm(p2, n)
+    try:
+        f1 = p1.fitness.values[0]; f2 = p2.fitness.values[0]
+    except (AttributeError, IndexError):
+        f1 = f2 = 0.0
+    if f1 <= f2:
+        donor, recipient = a, b
+    else:
+        donor, recipient = b, a
+
+    def _migrate(don, rec):
+        i, j = sorted(rng.integers(0, n, size=2).tolist())
+        return _ox_insert_segment(rec, don[i:j + 1], i)
+
+    return _migrate(donor, recipient), _migrate(recipient, donor)

@@ -33,7 +33,10 @@ VARIANTS = [
     Spec("SGA+DE_mut",
          select_wrapper=feat.with_population_aware_select,
          mutate=feat.make_de_mutation(F=0.5)),
-    Spec("SGA+greedy_replace",    replace=feat.replace_greedy),
+    # greedy_replace, archive_replace, metropolis_replace operate purely on
+    # fitness comparisons + identity-preserving list() cloning — they don't
+    # touch gene values, so they're safe on permutation encodings too.
+    Spec("SGA+greedy_replace",    replace=feat.replace_greedy, encodings=ANY),
     Spec("SGA+adaptive_mut",      mutate=feat.make_adaptive_mutate(base_indpb=0.1)),
     Spec("SGA+restart",
          diversity=feat.make_diversity_restart(stagnation_threshold=15,
@@ -54,7 +57,8 @@ VARIANTS = [
     Spec("SGA+chaotic_tent_init", init=feat.init_chaotic_tent),
     Spec("SGA+chaotic_sin_init",  init=feat.init_chaotic_sinusoidal),
     Spec("SGA+encircling_mut",    mutate=feat.mutate_encircling_prey),
-    Spec("SGA+archive_replace",   replace=feat.make_archive_replace(fraction=0.1)),
+    Spec("SGA+archive_replace",   replace=feat.make_archive_replace(fraction=0.1),
+         encodings=ANY),
     Spec("SGA+islands",           overrides={"n_islands": 4, "migration_interval": 10}),
     Spec("SGA+aging",             diversity=feat.make_aging_replace(tau=20)),
     Spec("SGA+receptor_edit",     diversity=feat.make_receptor_editing(fraction=0.1)),
@@ -150,7 +154,8 @@ VARIANTS = [
                                           c2=1.5, every_n_gens=5)),
     Spec("SGA+metropolis_replace",
          replace=feat.make_metropolis_replace(T0=1.0, T_end=1e-3,
-                                               schedule="exp", elitism_k=1)),
+                                               schedule="exp", elitism_k=1),
+         encodings=ANY),
     Spec("SGA+cuckoo_discovery",
          diversity=feat.make_cuckoo_discovery(pa=0.25)),
     Spec("SGA+abc_scout",         replace=feat.make_abc_scout()),
@@ -206,6 +211,69 @@ VARIANTS = [
                                               rho=0.1, cand_k=16),
          refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
                                      deposit_scheme="mmas", cand_k=16),
+         encodings=PERM),
+
+    # --- Permutation versions of the real-coded variants ----------------
+    # These re-use the same variant *names* as their real counterparts so
+    # `--variants <name>` works uniformly on TSP without per-flag plumbing
+    # (variants_for_encoding filters by spec.encodings).
+    #
+    # Every operator below is TSP-edge-aware: the math is rewritten in the
+    # language of tours, edges, swap sequences, and 2-opt moves rather than
+    # coerced floats, while the *metaphor* of the named feature is preserved
+    # so the ablation against the baseline still reflects the same idea.
+    # See features.py F87–F93 for per-operator design notes.
+    Spec("SGA+restart",
+         diversity=feat.make_diversity_restart_perm(stagnation_threshold=15,
+                                                    restart_fraction=0.2),
+         encodings=PERM),
+    Spec("SGA+abc_scout",
+         replace=feat.make_abc_scout_perm(),
+         encodings=PERM),
+    Spec("SGA+cuckoo_discovery",
+         diversity=feat.make_cuckoo_discovery_perm(pa=0.25),
+         encodings=PERM),
+    Spec("SGA+net_suppress",
+         diversity=feat.make_network_suppression_perm(threshold_frac=0.02),
+         encodings=PERM),
+    Spec("SGA+immune_memory",
+         diversity=feat.make_immune_memory_pool_perm(k_inject=2,
+                                                     dist_thresh_frac=0.05),
+         encodings=PERM),
+    # pher_minmax on TSP -> MMAS edge-pheromone (this *is* the permutation-
+    # native form of pheromone min-max bounds; reuse the GACO machinery
+    # rather than build a parallel state).
+    Spec("SGA+pher_minmax",
+         crossover=feat.make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3,
+                                               rho=0.1, cand_k=16,
+                                               local_update=True, xi=0.1),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
+                                     deposit_scheme="mmas", cand_k=16),
+         encodings=PERM),
+    # TSP-edge-aware operators (F87–F93). Each preserves its named feature's
+    # metaphor — DE differential, SHADE current-to-pbest, GSA gravity, BFO
+    # swim/tumble, krill food/herd, SOS three phases, BBO migration — but
+    # rewrites the update in terms of edges, swap sequences, and 2-opt moves.
+    Spec("SGA+DE_mut",
+         mutate=feat.make_de_perm(F=0.5),
+         encodings=PERM),
+    Spec("SGA+SHADE_mut",
+         mutate=feat.make_shade_perm(),
+         encodings=PERM),
+    Spec("SGA+gsa_full_mut",
+         mutate=feat.make_gsa_full_perm(),
+         encodings=PERM),
+    Spec("SGA+bfo_chemotaxis",
+         mutate=feat.make_bfo_chemotaxis_perm(N_s=4),
+         encodings=PERM),
+    Spec("SGA+krill_herd_mut",
+         mutate=feat.make_krill_herd_perm(),
+         encodings=PERM),
+    Spec("SGA+sos_mut",
+         mutate=feat.make_sos_perm(),
+         encodings=PERM),
+    Spec("SGA+bbo_migration_cx",
+         crossover=feat.crossover_bbo_perm,
          encodings=PERM),
 ]
 
