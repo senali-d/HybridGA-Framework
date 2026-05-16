@@ -10,6 +10,7 @@ Public entry point:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import matplotlib
@@ -39,9 +40,21 @@ def _ensure(p: Path) -> Path:
     return p
 
 
+_TRAILING_INT_RE = re.compile(r"(\d+)$")
+
+
+def _func_sort_key(s: str) -> tuple:
+    # CEC-style "F1", "F12" sort numerically; TSPLIB names like "eil51",
+    # "kroA100" sort by trailing integer then prefix. Falls back to (1, 0, name)
+    # for anything without a trailing integer so it still sorts deterministically.
+    m = _TRAILING_INT_RE.search(s)
+    if m:
+        return (0, int(m.group(1)), s)
+    return (1, 0, s)
+
+
 def _function_order(df: pd.DataFrame) -> list[str]:
-    funcs = sorted(df["function"].unique(), key=lambda s: int(s[1:]))
-    return funcs
+    return sorted(df["function"].unique(), key=_func_sort_key)
 
 
 def _variants(df: pd.DataFrame) -> list[str]:
@@ -283,7 +296,7 @@ def plot_heatmaps(runs_df: pd.DataFrame, out_dir: Path,
                    .pivot(index="variant", columns="function", values="s")
         # preserve numeric F-order
         pivot = pivot.reindex(columns=sorted(pivot.columns,
-                                             key=lambda s: int(s[1:])))
+                                             key=_func_sort_key))
         fig, ax = plt.subplots(figsize=(max(6, 0.5 * pivot.shape[1] + 4),
                                         0.5 * pivot.shape[0] + 2))
         sns.heatmap(pivot, cmap="RdYlGn", center=0, vmin=-1, vmax=1,
@@ -297,7 +310,7 @@ def plot_heatmaps(runs_df: pd.DataFrame, out_dir: Path,
         cdf = cliffs_delta_table(results, baseline_name)
         pivot = cdf.pivot(index="variant", columns="function", values="cliffs_delta")
         pivot = pivot.reindex(columns=sorted(pivot.columns,
-                                             key=lambda s: int(s[1:])))
+                                             key=_func_sort_key))
         fig, ax = plt.subplots(figsize=(max(6, 0.5 * pivot.shape[1] + 4),
                                         0.5 * pivot.shape[0] + 2))
         sns.heatmap(pivot, cmap="RdYlGn", center=0, vmin=-1, vmax=1,

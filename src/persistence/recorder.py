@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -66,6 +67,23 @@ class ExperimentRecorder:
             ts = time.strftime("%Y-%m-%d_%H-%M-%S")
             name = f"exp_{ts}_D{self.args.get('dim', '?')}_{mode}"
         self.exp_dir = self.out_root / name
+        # If this tag dir already exists, wipe stale outputs so a re-run
+        # cannot blend with a previous batch's runs/history/summary/plots.
+        if self.exp_dir.exists() and any(
+            (self.exp_dir / s).exists()
+            for s in ("runs.parquet", "history.parquet", "summary", "plots")
+        ):
+            print(f"[recorder] reusing existing tag dir {self.exp_dir} — "
+                  f"wiping prior runs.parquet/history.parquet/summary/plots",
+                  file=sys.stderr)
+            for stale in ("runs.parquet", "history.parquet", "config.json"):
+                p = self.exp_dir / stale
+                if p.exists():
+                    p.unlink()
+            for sub in ("summary", "plots"):
+                p = self.exp_dir / sub
+                if p.exists():
+                    shutil.rmtree(p)
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         (self.exp_dir / "summary").mkdir(exist_ok=True)
         (self.exp_dir / "plots").mkdir(exist_ok=True)
