@@ -163,6 +163,20 @@ def make_init(spec):
             return [list(rng.permutation(dim)) for _ in range(n)]
         _init.__name__ = "random_permutation"
         return _init
+    if kind == "random_int_vector":
+        # Discrete-integer init: each gene drawn uniformly from
+        # {lb_i, ..., ub_i} (inclusive). Used by the UCTP suite where
+        # genes are timeslot ids in {0..44}.
+        def _init(n, dim, lb, ub, ctx):
+            rng = ctx["rng"]
+            lo = np.asarray(lb, dtype=np.int64)
+            hi = np.asarray(ub, dtype=np.int64)
+            return [
+                rng.integers(lo, hi + 1).tolist()
+                for _ in range(n)
+            ]
+        _init.__name__ = "random_int_vector"
+        return _init
     raise ValueError(f"unknown init kind: {kind!r}")
 
 
@@ -207,6 +221,20 @@ def make_crossover(spec):
         # a hard dependency on the feature library.
         from ga import features as feat
         return feat.make_eax()
+    if kind == "uniform_int":
+        # Discrete uniform crossover: for each gene, child1 takes p1's
+        # value with prob 0.5, else p2's; child2 takes the complement.
+        # Genes stay in their original domain since both parents are
+        # already in-bounds, so no clip is needed.
+        def _cx(p1, p2, ctx):
+            rng = ctx["rng"]
+            n = len(p1)
+            mask = rng.random(n) < 0.5
+            c1 = [int(p1[i]) if mask[i] else int(p2[i]) for i in range(n)]
+            c2 = [int(p2[i]) if mask[i] else int(p1[i]) for i in range(n)]
+            return c1, c2
+        _cx.__name__ = "uniform_int"
+        return _cx
     raise ValueError(f"unknown crossover kind: {kind!r}")
 
 
@@ -261,6 +289,53 @@ def make_mutation(spec, dim):
             if alt_fn is not None and rng.random() < 0.5:
                 op = alt_fn
             return op(seq, rng)
+
+        _mut.__name__ = (
+            f"{kind}_or_{alt}_pm{pm:.4g}" if alt is not None
+            else f"{kind}_pm{pm:.4g}"
+        )
+        return _mut
+    if kind in ("move_event", "swap_event"):
+        # Discrete-integer mutation for assignment-style encodings (UCTP).
+        #   move_event: with prob `pm` per gene, redraw uniformly from
+        #               {lb_i .. ub_i}.
+        #   swap_event: with prob `pm` per gene, swap with a random other
+        #               gene's value (so the move budget is symmetric).
+        # `alt` mixes the two operators 50/50 per call, mirroring how
+        # swap/inversion are mixed for permutations.
+        pm = float(spec.get("pm", 1.0 / dim))
+        alt = spec.get("alt")
+        _DISC_OPS = ("move_event", "swap_event")
+        if alt is not None and alt not in _DISC_OPS:
+            raise ValueError(f"unknown alt mutation kind: {alt!r}")
+
+        def _apply_move(seq, rng, ctx):
+            lo = np.asarray(ctx["lb"], dtype=np.int64)
+            hi = np.asarray(ctx["ub"], dtype=np.int64)
+            for i in range(len(seq)):
+                if rng.random() < pm:
+                    seq[i] = int(rng.integers(lo[i], hi[i] + 1))
+            return seq
+
+        def _apply_swap_event(seq, rng, ctx):
+            n = len(seq)
+            for i in range(n):
+                if rng.random() < pm:
+                    j = int(rng.integers(0, n))
+                    seq[i], seq[j] = seq[j], seq[i]
+            return seq
+
+        _OP_FNS = {"move_event": _apply_move, "swap_event": _apply_swap_event}
+        primary_fn = _OP_FNS[kind]
+        alt_fn = _OP_FNS[alt] if alt is not None else None
+
+        def _mut(ind, ctx):
+            seq = [int(v) for v in ind]
+            rng = ctx["rng"]
+            op = primary_fn
+            if alt_fn is not None and rng.random() < 0.5:
+                op = alt_fn
+            return op(seq, rng, ctx)
 
         _mut.__name__ = (
             f"{kind}_or_{alt}_pm{pm:.4g}" if alt is not None

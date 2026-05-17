@@ -122,12 +122,16 @@ def test_tsp_baseline_uses_permutation_operators():
 
 
 def test_timetabling_baseline_constructs():
-    """The day_exchange/move_event operator kinds aren't implemented yet,
-    so this asserts that the loader fails *with a clear message* rather
-    than silently producing wrong defaults."""
+    """UCTP baseline: discrete-integer init, uniform-int crossover,
+    move_event/swap_event mutation, passthrough bounds."""
     cfg = _load("timetabling")
-    with pytest.raises(ValueError, match="unknown crossover kind"):
-        baseline_from_config(cfg, dim=10)
+    b = baseline_from_config(cfg, dim=100)
+    assert b.init_fn.__name__ == "random_int_vector"
+    assert b.crossover_fn.__name__ == "uniform_int"
+    assert "move_event" in b.mutate_fn.__name__
+    assert b.bound_handling == "passthrough"
+    assert b.cx_prob == 0.9
+    assert b.elitism_k == 1
 
 
 def test_variant_diff_reports_replacement_and_wrapper():

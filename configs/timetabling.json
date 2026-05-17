@@ -1,15 +1,22 @@
 {
   "suite": "timetabling",
   "encoding": "discrete",
+  "bound_handling": "passthrough",
   "pop_size": 50,
+  "max_fes": 50000,
+  "max_generations": 1000,
   "n_runs": 30,
+  "init":      {"kind": "random_int_vector"},
   "selection": {"kind": "tournament", "k": 2},
-  "crossover": {"kind": "day_exchange", "pc": 0.8},
-  "mutation":  {"kind": "move_event", "pm": 0.10, "alt": "swap_event"},
-  "elitism": {"k": 1},
-  "constraint_handling": "weighted_penalty",
-  "stopping": "itc2007_time_limit",
-  "_stopping_note": "Halt at the ITC-2007 official wall-clock limit reported by the benchmark's per-machine timer tool (runtime varies by hardware; not an FE-count budget).",
-  "track": "ITC-2007 Track 2 or Track 3",
-  "_note": "ITC-2007 problem evaluators and the day_exchange/move_event operators are not yet wired into src/benchmarks or src/ga/core factories. The runner will warn and skip until they are added."
+  "crossover": {"kind": "uniform_int", "pc": 0.9},
+  "mutation":  {"kind": "move_event", "pm": 0.05, "alt": "swap_event"},
+  "elitism":   {"k": 1},
+  "stopping":  "fe_budget",
+  "_stopping_note": "Halt at 50,000 cumulative function evaluations (~1000 generations at pop=50). The Rossi-Doria/Socha 2002 paper used a per-machine wall-clock budget; the runner only supports FE-budget stopping today.",
+  "instances": [
+    "easy01", "easy02", "easy03", "easy04", "easy05",
+    "medium01", "medium02", "medium03", "medium04", "medium05",
+    "hard01", "hard02", "hard03", "hard04", "hard05"
+  ],
+  "_note": "Run scripts/fetch_socha.py once to populate data/socha/ before --suite timetabling."
 }

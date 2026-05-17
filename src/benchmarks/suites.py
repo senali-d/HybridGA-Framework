@@ -31,6 +31,7 @@ from pymoo.problems.single import Schwefel as _PymooSchwefel
 from ga.core import run_sga
 from benchmarks.engineering import ENGINEERING_FUNCS
 from benchmarks.tsp import TSPLIB_FUNCS
+from benchmarks.timetabling import SOCHA_FUNCS
 
 
 # ============================================================================
@@ -165,6 +166,7 @@ _SUITES = {
     "separable": dict(SEPARABLE_FUNCS),
     "engineering": dict(ENGINEERING_FUNCS),
     "tsp": dict(TSPLIB_FUNCS),
+    "timetabling": dict(SOCHA_FUNCS),
 }
 
 
@@ -353,6 +355,24 @@ def run_tsp_protocol(variants, dim=None, n_runs=30, max_fes=None,
     return _run_protocol(
         suite_name="tsp",
         funcs_registry=TSPLIB_FUNCS,
+        dim_supported_map=None,
+        variants=variants, dim=(dim if dim is not None else 0),
+        n_runs=n_runs, max_fes=max_fes,
+        pop_size=pop_size, recorder=recorder, record_history=record_history,
+        workers=workers, functions=functions,
+    )
+
+
+def run_timetabling_protocol(variants, dim=None, n_runs=30, max_fes=None,
+                             pop_size=50, recorder=None, record_history=True,
+                             workers=1, functions=None):
+    """Run protocol for Socha-2002 UCTP instances. Each instance has a
+    fixed event count baked into its `.tim` file, so the `dim` argument is
+    accepted for interface compatibility but ignored by the constructors.
+    """
+    return _run_protocol(
+        suite_name="timetabling",
+        funcs_registry=SOCHA_FUNCS,
         dim_supported_map=None,
         variants=variants, dim=(dim if dim is not None else 0),
         n_runs=n_runs, max_fes=max_fes,
