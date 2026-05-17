@@ -213,6 +213,42 @@ VARIANTS = [
                                      deposit_scheme="mmas", cand_k=16),
          encodings=PERM),
 
+    # --- Real-coded versions of the GACO / OX / EAX variants ------------
+    # The PERM versions above use edge pheromone + 2-opt; these REAL
+    # versions preserve the named feature — binned per-dim pheromone with
+    # the same deposit scheme (MMAS / EAS / ASrank) plus a PSO sub-swarm
+    # refine — so the ablation against the real-coded baseline reflects
+    # the same idea on continuous suites (cec2022, engineering, separable).
+    Spec("SGA+GACO_hybrid",
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         mutate=feat.make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0),
+         refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
+         encodings=REAL),
+    Spec("SGA+GACO_asrank",
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         mutate=feat.make_pheromone_asrank(rho=0.1, w=6),
+         refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
+         encodings=REAL),
+    Spec("SGA+GACO_eas",
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         mutate=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
+         refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
+         encodings=REAL),
+    # OX preserves order/position; the closest real-coded analog is a
+    # per-dim weighted positional blend driven by the same pheromone state.
+    Spec("SGA+OX_crossover",
+         crossover=feat.make_pheromone_weighted_crossover(rho=0.1),
+         encodings=REAL),
+    # EAX_ACO real analog: pheromone-weighted positional blend (the
+    # "assembly" flavor — both parents contribute per dim, weighted by
+    # tau) + ACO-guided (EAS) mutation + PSO refine. Differs from
+    # GACO_eas (edge-pheromone crossover) so the ablation produces signal.
+    Spec("SGA+EAX_ACO",
+         crossover=feat.make_pheromone_weighted_crossover(rho=0.1),
+         mutate=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
+         refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
+         encodings=REAL),
+
     # --- Permutation versions of the real-coded variants ----------------
     # These re-use the same variant *names* as their real counterparts so
     # `--variants <name>` works uniformly on TSP without per-flag plumbing
