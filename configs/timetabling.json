@@ -2,21 +2,27 @@
   "suite": "timetabling",
   "encoding": "discrete",
   "bound_handling": "passthrough",
+  "loop": "steady_state",
   "pop_size": 50,
-  "max_fes": 50000,
-  "max_generations": 1000,
+  "max_fes": 12000,
   "n_runs": 30,
   "init":      {"kind": "random_int_vector"},
   "selection": {"kind": "tournament", "k": 2},
-  "crossover": {"kind": "uniform_int", "pc": 0.9},
-  "mutation":  {"kind": "move_event", "pm": 0.05, "alt": "swap_event"},
+  "crossover": {"kind": "ssga_uniform_slot", "pc": 0.8},
+  "mutation":  {"kind": "ssga_n1n2n3", "pm": 0.5},
+  "replace":   {"kind": "worst"},
+  "refine":    {"kind": "ls1", "s_max": 20},
   "elitism":   {"k": 1},
   "stopping":  "fe_budget",
-  "_stopping_note": "Halt at 50,000 cumulative function evaluations (~1000 generations at pop=50). The Rossi-Doria/Socha 2002 paper used a per-machine wall-clock budget; the runner only supports FE-budget stopping today.",
+  "_stopping_note": "Yang & Jat 2011 SSGA (Algorithm 1) + LS1 (Algorithm 2). pc=0.8, pm=0.5, pop=50 from paper §V (p. 99). C=10^6 HCV weight. Paper uses wall-clock budgets (90s small, 900s medium, 9000s large); the runner only supports FE-budget stopping today — `max_fes` here is sized for medium instances. Override per-tier via CLI: `--functions easy01,... --max-fes 7000` for small, leave default for medium, `--max-fes 70000` for hard/comp16-20.",
   "instances": [
     "easy01", "easy02", "easy03", "easy04", "easy05",
     "medium01", "medium02", "medium03", "medium04", "medium05",
-    "hard01", "hard02", "hard03", "hard04", "hard05"
+    "hard01",
+    "comp01", "comp02", "comp03", "comp04", "comp05",
+    "comp06", "comp07", "comp08", "comp09", "comp10",
+    "comp11", "comp12", "comp13", "comp14", "comp15",
+    "comp16", "comp17", "comp18", "comp19", "comp20"
   ],
-  "_note": "Run scripts/fetch_socha.py once to populate data/socha/ before --suite timetabling."
+  "_data_note": "Socha 2002 instances (easy*/medium*/hard*) live in data/socha/ (run scripts/fetch_socha.py). TTC 2002 competition instances (comp*) live in data/ttc2002/ (run scripts/fetch_ttc2002.py)."
 }

@@ -3875,3 +3875,236 @@ def crossover_bbo_perm(p1, p2, ctx):
         return _ox_insert_segment(rec, don[i:j + 1], i)
 
     return _migrate(donor, recipient), _migrate(recipient, donor)
+
+
+# ============================================================
+# Yang & Jat 2011 SSGA operators (UCTP suite)
+# ------------------------------------------------------------
+# Steady-state GA building blocks for the University Course Timetabling
+# Problem. These pair with `run_ssga` in `ga.core` and the `UCTPProblem`
+# evaluator in `benchmarks.timetabling` (which exposes `evaluate_full`
+# and `assign_rooms` for delta-style updates).
+#
+#   replace_worst        — worst-of-pop replacement (Algorithm 1, line 9)
+#   mutate_ssga_n1n2n3   — pick one random neighborhood (N1/N2/N3) and
+#                          make ONE random move (paper §IV-A mutation)
+#   make_refine_ls1      — LS1 (Algorithm 2): two-phase local search
+#                          across N1+N2 with first-improvement acceptance
+# ============================================================
+
+def replace_worst(parents, offspring, ctx):
+    """Steady-state replacement: drop the `len(offspring)` worst members
+    of the parent population and append the offspring. Used by Yang & Jat
+    2011 SSGA (Algorithm 1, line 9). Keeps population size constant.
+    """
+    pool = list(parents)
+    pool.sort(key=lambda ind: ind.fitness.values[0])
+    keep = pool[: max(0, len(parents) - len(offspring))]
+    return keep + list(offspring)
+
+
+_UCTP_N_TIMESLOTS = 45  # matches benchmarks.timetabling.N_TIMESLOTS
+
+
+def mutate_ssga_n1n2n3(ind, ctx):
+    """Yang & Jat 2011 mutation: randomly pick one of {N1, N2, N3} and
+    apply ONE move from that neighborhood.
+
+      N1: move one event to a different timeslot.
+      N2: swap the timeslots of two events.
+      N3: 3-cycle permute three events' timeslots (one of the two
+          non-identity permutations).
+
+    Operates on a discrete integer vector (timeslots in [0, 44]).
+    """
+    rng = ctx["rng"]
+    seq = [int(v) for v in ind]
+    n = len(seq)
+    if n < 2:
+        return seq
+    # ub may be a numpy array (per-gene); for UCTP every gene shares the
+    # same domain so reading position 0 is sufficient.
+    ub = ctx.get("ub")
+    if ub is None or len(ub) == 0:
+        n_slots = _UCTP_N_TIMESLOTS
+    else:
+        n_slots = int(ub[0]) + 1
+
+    pick = int(rng.integers(0, 3))
+    if pick == 0:
+        # N1: move one event to a different slot
+        e = int(rng.integers(0, n))
+        new_slot = int(rng.integers(0, n_slots))
+        while new_slot == seq[e] and n_slots > 1:
+            new_slot = int(rng.integers(0, n_slots))
+        seq[e] = new_slot
+    elif pick == 1 or n < 3:
+        # N2: swap two events' slots
+        i, j = rng.choice(n, size=2, replace=False).tolist()
+        seq[i], seq[j] = seq[j], seq[i]
+    else:
+        # N3: 3-cycle permutation (one of the two cyclic permutations of
+        # three distinct events' slots, other than the identity).
+        i, j, k = rng.choice(n, size=3, replace=False).tolist()
+        if rng.random() < 0.5:
+            seq[i], seq[j], seq[k] = seq[j], seq[k], seq[i]
+        else:
+            seq[i], seq[j], seq[k] = seq[k], seq[i], seq[j]
+    return seq
+
+
+def _events_in_hcv(problem, x, rooms):
+    """Return event indices contributing to current HCV: unplaced events
+    (room == -1) plus events whose slot has any student-conflict involving
+    one of their students."""
+    n = problem.n_events
+    n_slots = _UCTP_N_TIMESLOTS
+    bad = [e for e in range(n) if int(rooms[e]) == -1]
+    ts = np.asarray(x, dtype=np.int64)
+    onehot = np.zeros((n, n_slots), dtype=np.int8)
+    onehot[np.arange(n), ts] = 1
+    attend_slot = problem._student_event_i @ onehot  # (n_students, n_slots)
+    conflict_mask = attend_slot > 1
+    if not bool(conflict_mask.any()):
+        return bad
+    se = problem.student_event
+    in_bad = set(bad)
+    for e in range(n):
+        if e in in_bad:
+            continue
+        t = int(ts[e])
+        if bool(np.any(se[:, e] & conflict_mask[:, t])):
+            bad.append(e)
+    return bad
+
+
+def _ls1_apply(problem, x, rooms, hcv, scv, s_max, rng,
+               max_trials=None, per_event_n1=8, per_event_n2=8):
+    """In-place LS1 (Yang & Jat 2011 Algorithm 2) on a single individual.
+
+    Two phases:
+      1. Reduce HCV: only the subset of events currently contributing to
+         HCV are visited. For each, try `per_event_n1` random N1 moves
+         (move to another slot) then `per_event_n2` N2 swaps, accepting
+         the first move that strictly reduces total HCV.
+      2. If feasible (hcv==0), reduce SCV across all events with the same
+         per-event trial caps, accepting moves that reduce SCV without
+         reintroducing HCV.
+
+    `s_max` caps accepted moves per phase. `max_trials` caps the total
+    number of trial-move scorings across both phases (defensive bound for
+    huge instances; defaults to 50 * s_max).
+
+    N3 (3-cycle) is not enumerated here — small benefit, big cost. The
+    mutation operator (`mutate_ssga_n1n2n3`) still samples N3 so the
+    family stays reachable through the outer GA loop.
+    """
+    n = problem.n_events
+    n_slots = _UCTP_N_TIMESLOTS
+    if max_trials is None:
+        max_trials = 50 * s_max
+
+    state = {"rooms": rooms, "hcv": hcv, "scv": scv, "trials": 0}
+
+    def _try_n1(e, target_predicate):
+        if state["trials"] >= max_trials:
+            return False
+        old_slot = int(x[e])
+        k = min(per_event_n1, n_slots)
+        choices = rng.choice(n_slots, size=k, replace=False).tolist()
+        for new_slot in choices:
+            ns = int(new_slot)
+            if ns == old_slot:
+                continue
+            state["trials"] += 1
+            x[e] = ns
+            new_rooms = problem.assign_rooms(
+                x, slots=[old_slot, ns], rooms=state["rooms"],
+            )
+            _f, nh, nss = problem.score(x, new_rooms)
+            if target_predicate(nh, nss):
+                state["rooms"], state["hcv"], state["scv"] = new_rooms, nh, nss
+                return True
+            x[e] = old_slot
+            if state["trials"] >= max_trials:
+                return False
+        return False
+
+    def _try_n2(e, target_predicate):
+        if state["trials"] >= max_trials or n < 2:
+            return False
+        k = min(per_event_n2, n)
+        partners = rng.choice(n, size=k, replace=False).tolist()
+        for f in partners:
+            f = int(f)
+            if f == e:
+                continue
+            slot_e, slot_f = int(x[e]), int(x[f])
+            if slot_e == slot_f:
+                continue
+            state["trials"] += 1
+            x[e], x[f] = slot_f, slot_e
+            new_rooms = problem.assign_rooms(
+                x, slots=[slot_e, slot_f], rooms=state["rooms"],
+            )
+            _f, nh, nss = problem.score(x, new_rooms)
+            if target_predicate(nh, nss):
+                state["rooms"], state["hcv"], state["scv"] = new_rooms, nh, nss
+                return True
+            x[e], x[f] = slot_e, slot_f
+            if state["trials"] >= max_trials:
+                return False
+        return False
+
+    # ---- Phase 1: HCV repair ----
+    steps = 0
+    hcv_events = _events_in_hcv(problem, x, state["rooms"])
+    rng.shuffle(hcv_events)
+    for e in hcv_events:
+        if state["hcv"] == 0 or steps >= s_max or state["trials"] >= max_trials:
+            break
+        cur = state["hcv"]
+        pred = lambda nh, ns, _h=cur: nh < _h
+        if _try_n1(e, pred) or _try_n2(e, pred):
+            steps += 1
+
+    # ---- Phase 2: SCV reduction (only if feasible) ----
+    if state["hcv"] == 0 and state["trials"] < max_trials:
+        steps = 0
+        order = list(range(n))
+        rng.shuffle(order)
+        for e in order:
+            if steps >= s_max or state["trials"] >= max_trials:
+                break
+            cur = state["scv"]
+            pred = lambda nh, ns, _s=cur: (nh == 0 and ns < _s)
+            if _try_n1(e, pred) or _try_n2(e, pred):
+                steps += 1
+
+    fitness = float(problem._hcv_weight * state["hcv"] + state["scv"])
+    return x, state["rooms"], state["hcv"], state["scv"], fitness
+
+
+def make_refine_ls1(s_max=20):
+    """Return a population-level refine_fn that applies LS1 to every
+    individual. Used by the generational SGA backbone for variants that
+    want LS1 as an end-of-generation refinement; `run_ssga` invokes
+    `_ls1_apply` directly for the SSGA-style per-child schedule.
+    """
+    def refine_ls1(population, ctx):
+        problem = ctx["problem"]
+        rng = ctx["rng"]
+        out = []
+        for ind in population:
+            x = [int(v) for v in ind]
+            _f, hcv, scv, rooms = problem.evaluate_full(x)
+            x, rooms, hcv, scv, fitness = _ls1_apply(
+                problem, x, rooms, hcv, scv, s_max, rng,
+            )
+            new_ind = creator.Individual(x)
+            new_ind.fitness.values = (float(fitness),)
+            new_ind.age = getattr(ind, "age", 0)
+            out.append(new_ind)
+        return out
+    refine_ls1.__name__ = f"refine_ls1_smax{s_max}"
+    return refine_ls1

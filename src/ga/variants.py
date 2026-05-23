@@ -19,6 +19,7 @@ from ga.core import default_select
 # ---- Encoding constants for tagging ------------------------------------
 REAL = ("real",)
 PERM = ("permutation",)
+DISCRETE = ("discrete",)
 ANY  = ("real", "permutation", "discrete")
 
 
@@ -314,6 +315,14 @@ VARIANTS = [
     Spec("SGA+bbo_migration_cx",
          crossover=feat.crossover_bbo_perm,
          encodings=PERM),
+
+    # --- UCTP / timetabling --------------------------------------------
+    # Yang & Jat 2011 SSGA (Algorithm 1) is wired by the suite baseline
+    # itself (configs/timetabling.json sets loop=steady_state and the LS1
+    # refine block). We expose an explicit "SSGA" alias so the variant
+    # appears in --variants listings and audit diffs, even though it has
+    # no slot-level divergence from the baseline.
+    Spec("SSGA", encodings=DISCRETE),
 ]
 
 

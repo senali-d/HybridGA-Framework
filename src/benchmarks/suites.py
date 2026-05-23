@@ -28,10 +28,10 @@ from opfunu.cec_based.cec2022 import (
 from pymoo.problems.single import Rastrigin as _PymooRastrigin
 from pymoo.problems.single import Schwefel as _PymooSchwefel
 
-from ga.core import run_sga
+from ga.core import run_sga, run_trial
 from benchmarks.engineering import ENGINEERING_FUNCS
 from benchmarks.tsp import TSPLIB_FUNCS
-from benchmarks.timetabling import SOCHA_FUNCS
+from benchmarks.timetabling import SOCHA_FUNCS, UCTP_FUNCS
 
 
 # ============================================================================
@@ -166,7 +166,7 @@ _SUITES = {
     "separable": dict(SEPARABLE_FUNCS),
     "engineering": dict(ENGINEERING_FUNCS),
     "tsp": dict(TSPLIB_FUNCS),
-    "timetabling": dict(SOCHA_FUNCS),
+    "timetabling": dict(UCTP_FUNCS),
 }
 
 
@@ -183,7 +183,7 @@ def _worker_run_one(payload):
     FCls = _SUITES[suite_name][func_name]
     problem = FCls(ndim=kw["dim"])
     t_run = time.time()
-    r = run_sga(
+    r = run_trial(
         problem=problem,
         config=variant,
         pop_size=kw["pop_size"],
@@ -279,7 +279,7 @@ def _run_protocol(suite_name, funcs_registry, dim_supported_map,
                 for seed in range(n_runs):
                     job += 1
                     t_run = time.time()
-                    r = run_sga(
+                    r = run_trial(
                         problem=problem, config=variant, pop_size=pop_size,
                         max_fes=max_fes, seed=seed,
                         record_history=record_history,
@@ -366,13 +366,14 @@ def run_tsp_protocol(variants, dim=None, n_runs=30, max_fes=None,
 def run_timetabling_protocol(variants, dim=None, n_runs=30, max_fes=None,
                              pop_size=50, recorder=None, record_history=True,
                              workers=1, functions=None):
-    """Run protocol for Socha-2002 UCTP instances. Each instance has a
-    fixed event count baked into its `.tim` file, so the `dim` argument is
-    accepted for interface compatibility but ignored by the constructors.
+    """Run protocol for UCTP instances (Socha 2002 + TTC 2002). Each
+    instance has a fixed event count baked into its `.tim` file, so the
+    `dim` argument is accepted for interface compatibility but ignored
+    by the constructors.
     """
     return _run_protocol(
         suite_name="timetabling",
-        funcs_registry=SOCHA_FUNCS,
+        funcs_registry=UCTP_FUNCS,
         dim_supported_map=None,
         variants=variants, dim=(dim if dim is not None else 0),
         n_runs=n_runs, max_fes=max_fes,

@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 from ga.core import (
     FeatureConfig,
     make_init, make_select, make_crossover, make_mutation, make_replace,
+    make_refine,
 )
 
 
@@ -97,7 +98,13 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
     sel_spec  = suite_cfg.get("selection", {"kind": "tournament", "k": 3})
     cx_spec   = suite_cfg.get("crossover", {"kind": "sbx", "eta": 20, "pc": 0.9})
     mut_spec  = suite_cfg.get("mutation",  {"kind": "poly", "eta": 20})
+    # `replace` overrides the default k-elitism; falls back to the
+    # historical `elitism` block when absent so existing configs are
+    # backwards-compatible.
+    repl_spec = suite_cfg.get("replace") or suite_cfg.get("elitism", {"k": 1})
     elt_spec  = suite_cfg.get("elitism",   {"k": 1})
+    refine_spec = suite_cfg.get("refine")  # optional; e.g. {"kind":"ls1","s_max":20}
+    loop_kind = suite_cfg.get("loop", "generational")
 
     cfg = FeatureConfig(
         name=f"SGA_baseline_{suite_cfg.get('suite', 'unknown')}",
@@ -105,16 +112,25 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
         select_fn=make_select(sel_spec),
         crossover_fn=make_crossover(cx_spec),
         mutate_fn=make_mutation(mut_spec, dim=dim),
-        replace_fn=make_replace(elt_spec),
+        replace_fn=make_replace(repl_spec),
+        refine_fn=make_refine(refine_spec),
         bound_handling=suite_cfg.get("bound_handling", "clip"),
         cx_prob=float(cx_spec.get("pc", 0.9)),
         # Per-individual mutation gate. Operator semantics (per-gene poly
         # rate, per-position swap rate, whole-vector inversion rate) live
         # inside the mutation closure built by `make_mutation`. The gate
         # therefore defaults to 1.0 and only diverges if the JSON sets
-        # `mutation.pm_per_individual` explicitly.
-        mut_prob=float(mut_spec.get("pm_per_individual", 1.0)),
+        # `mutation.pm_per_individual` explicitly. The UCTP SSGA reads
+        # `mutation.pm` as a per-individual probability of triggering one
+        # N1/N2/N3 move; we accept either field name for that semantic.
+        mut_prob=float(mut_spec.get(
+            "pm_per_individual",
+            mut_spec.get("pm", 1.0) if mut_spec.get("kind") == "ssga_n1n2n3"
+            else 1.0,
+        )),
         elitism_k=int(elt_spec.get("k", 1)),
+        loop_kind=loop_kind,
+        refine_s_max=int((refine_spec or {}).get("s_max", 20)),
     )
     return cfg
 

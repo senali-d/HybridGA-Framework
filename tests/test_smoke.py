@@ -39,6 +39,15 @@ with (ROOT / "configs" / "tsp.json").open() as _f:
     _TSP_CFG = json.load(_f)
 _TSP_BASELINE = baseline_from_config(_TSP_CFG, dim=10)
 _TSP_BASELINE.name = "SGA_baseline"
+
+# Discrete-encoded (UCTP) baseline: SSGA + LS1 from Yang & Jat 2011. The
+# every-feature-wired-up test needs to inspect this baseline's operator
+# slots so the SSGA-specific feature functions (mutate_ssga_n1n2n3,
+# replace_worst, refine_ls1) count as referenced.
+with (ROOT / "configs" / "timetabling.json").open() as _f:
+    _UCTP_CFG = json.load(_f)
+_UCTP_BASELINE = baseline_from_config(_UCTP_CFG, dim=100)
+_UCTP_BASELINE.name = "SSGA"
 DIM = 10  # CEC 2022 supports {2, 10, 20}
 POP = 12
 MAX_FES = 200
@@ -122,7 +131,7 @@ def test_every_public_feature_has_a_variant():
     # operators (EAX crossover etc.) count as "wired in".
     all_variants = list(VARIANTS)
     all_variants += build_variants(_TSP_BASELINE, "permutation")
-    all_variants += build_variants(_BASELINE, "discrete")
+    all_variants += build_variants(_UCTP_BASELINE, "discrete")
 
     referenced: set[str] = set()
     for v in all_variants:
