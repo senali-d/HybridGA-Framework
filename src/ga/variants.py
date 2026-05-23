@@ -219,18 +219,21 @@ VARIANTS = [
     # the same deposit scheme (MMAS / EAS / ASrank) plus a PSO sub-swarm
     # refine — so the ablation against the real-coded baseline reflects
     # the same idea on continuous suites (cec2022, engineering, separable).
+    # deposit=False on crossover: the named mutate scheme (MMAS/ASrank/EAS)
+    # owns the per-gen evaporate+deposit, otherwise crossover's "as" deposit
+    # fires first and the once-per-gen guard suppresses the named scheme.
     Spec("SGA+GACO_hybrid",
-         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1, deposit=False),
          mutate=feat.make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0),
          refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
          encodings=REAL),
     Spec("SGA+GACO_asrank",
-         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1, deposit=False),
          mutate=feat.make_pheromone_asrank(rho=0.1, w=6),
          refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
          encodings=REAL),
     Spec("SGA+GACO_eas",
-         crossover=feat.make_pheromone_edge_crossover(rho=0.1),
+         crossover=feat.make_pheromone_edge_crossover(rho=0.1, deposit=False),
          mutate=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
          refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
          encodings=REAL),
@@ -244,7 +247,7 @@ VARIANTS = [
     # tau) + ACO-guided (EAS) mutation + PSO refine. Differs from
     # GACO_eas (edge-pheromone crossover) so the ablation produces signal.
     Spec("SGA+EAX_ACO",
-         crossover=feat.make_pheromone_weighted_crossover(rho=0.1),
+         crossover=feat.make_pheromone_weighted_crossover(rho=0.1, deposit=False),
          mutate=feat.make_pheromone_eas(rho=0.1, Q=1.0, e=5.0),
          refine=feat.make_sga_pso_refine(top_k=5, n_iters=3),
          encodings=REAL),

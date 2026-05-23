@@ -1733,14 +1733,16 @@ def make_pheromone_asrank(rho=0.1, w=6, Q=1.0, K=20, alpha=1.0):
 # ============================================================
 # F69 — Pheromone-Based Edge Recombination (crossover)
 # ============================================================
-def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0):
+def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0, deposit=True):
     """Per-dim discrete pick: child inherits p1[d] or p2[d] proportional to
-    τ at each parent's bin."""
+    τ at each parent's bin. Set deposit=False to skip evaporate+deposit
+    (when paired with a deposit-bearing mutate that owns the scheme)."""
     def crossover_pher_edge(p1, p2, ctx):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K)
-        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        if deposit:
+            _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
         tau = pher["tau"]
         a = np.asarray(list(p1), dtype=float)
         b = np.asarray(list(p2), dtype=float)
@@ -1765,12 +1767,15 @@ def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0):
 # ============================================================
 # F70 — Pheromone-Weighted Crossover (continuous blend)
 # ============================================================
-def make_pheromone_weighted_crossover(rho=0.1, K=20, alpha=1.0):
-    """Per-dim blend child = w·p1 + (1−w)·p2 with w τ-proportional."""
+def make_pheromone_weighted_crossover(rho=0.1, K=20, alpha=1.0, deposit=True):
+    """Per-dim blend child = w·p1 + (1−w)·p2 with w τ-proportional.
+    Set deposit=False to skip evaporate+deposit (when paired with a
+    deposit-bearing mutate that owns the scheme)."""
     def crossover_pher_weighted(p1, p2, ctx):
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K)
-        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        if deposit:
+            _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
         tau = pher["tau"]
         a = np.asarray(list(p1), dtype=float)
         b = np.asarray(list(p2), dtype=float)
