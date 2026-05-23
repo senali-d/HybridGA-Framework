@@ -317,12 +317,12 @@ VARIANTS = [
          encodings=PERM),
 
     # --- UCTP / timetabling --------------------------------------------
-    # Yang & Jat 2011 SSGA (Algorithm 1) is wired by the suite baseline
-    # itself (configs/timetabling.json sets loop=steady_state and the LS1
-    # refine block). We expose an explicit "SSGA" alias so the variant
-    # appears in --variants listings and audit diffs, even though it has
-    # no slot-level divergence from the baseline.
-    Spec("SSGA", encodings=DISCRETE),
+    # Yang & Jat 2011 SSGA (Algorithm 1) IS the suite baseline:
+    # configs/timetabling.json sets loop=steady_state plus the LS1 refine
+    # block and the paper's exact operator names. No separate Spec needed
+    # — running `--suite timetabling` already runs SSGA. Add additional
+    # Specs here only when defining proper variants (e.g. GSGA, EGSGA)
+    # that override one or more operator slots.
 ]
 
 
