@@ -150,3 +150,62 @@ def test_uctp_problem_missing_data_raises():
     from benchmarks.timetabling import UCTPProblem
     with pytest.raises(FileNotFoundError, match="fetch_"):
         UCTPProblem(name="does_not_exist", data_dir="/tmp/no_such_dir_xyz")
+
+
+UCTP_NATIVE_VARIANTS = [
+    "SGA+DE_mut", "SGA+SHADE_mut", "SGA+restart", "SGA+pher_minmax",
+    "SGA+immune_memory", "SGA+net_suppress", "SGA+cuckoo_discovery",
+    "SGA+abc_scout", "SGA+bfo_chemotaxis", "SGA+krill_herd_mut",
+    "SGA+sos_mut", "SGA+bbo_migration_cx", "SGA+gsa_full_mut",
+]
+
+
+def test_uctp_registry_has_all_13_native_variants():
+    """Hard invariant: all 13 UCTP-native names appear in the DISCRETE-
+    matching set, each exactly once. ANY-tagged variants (greedy_replace,
+    archive_replace, metropolis_replace) also match `discrete` and are
+    allowed alongside the native 13."""
+    from ga.variants import VARIANTS, variants_for_encoding
+    names = [s.name for s in variants_for_encoding("discrete")]
+    for nm in UCTP_NATIVE_VARIANTS:
+        assert nm in names, f"missing DISCRETE variant: {nm}"
+    native = [s for s in VARIANTS
+              if s.encodings == ("discrete",) and s.name in UCTP_NATIVE_VARIANTS]
+    seen = [s.name for s in native]
+    assert sorted(seen) == sorted(UCTP_NATIVE_VARIANTS), (
+        f"DISCRETE-only registry mismatch: {set(seen) ^ set(UCTP_NATIVE_VARIANTS)}"
+    )
+
+
+@needs_socha
+@pytest.mark.parametrize("variant_name", UCTP_NATIVE_VARIANTS)
+def test_uctp_variant_smoke(variant_name):
+    """Every UCTP-native variant runs on easy01 for a few generations and
+    produces a valid timeslot vector. Catches NameErrors, registry mistags,
+    encoding/return-type bugs in the adapters."""
+    from ga.build import baseline_from_config, variant_from_baseline
+    from ga.core import run_trial
+    from ga.variants import variants_for_encoding
+    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+
+    cfg = dict(json.loads((ROOT / "configs" / "timetabling.json").read_text()))
+    cfg["refine"] = {"kind": "ls1", "s_max": 2}
+
+    Cls = dict(SOCHA_FUNCS)["easy01"]
+    p = Cls()
+    baseline = baseline_from_config(cfg, dim=p.ndim)
+    baseline.name = "SSGA"
+
+    specs = {s.name: s for s in variants_for_encoding("discrete")}
+    assert variant_name in specs, (
+        f"{variant_name} missing from DISCRETE variants_for_encoding"
+    )
+    v = variant_from_baseline(baseline, specs[variant_name])
+    r = run_trial(p, v, pop_size=8, max_fes=120, seed=0, record_history=False)
+
+    assert r["fes_used"] <= 120
+    assert len(r["best_solution"]) == p.ndim
+    for g in r["best_solution"]:
+        assert 0 <= int(g) <= N_TIMESLOTS - 1
+    assert np.isfinite(r["best_fitness"])
+    assert r["best_fitness"] >= 0.0

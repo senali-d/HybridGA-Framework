@@ -1184,6 +1184,29 @@ def run_ssga(
         else:
             ctx["stagnation_counter"] += 1
 
+        # ---- Optional diversity injection (UCTP variants) ----
+        # Mirrors run_sga's hook. Fresh individuals come in with invalid
+        # fitness; evaluate them via evaluate_full + LS1 like the init path.
+        if config.diversity_fn is not None:
+            population = config.diversity_fn(population, ctx)
+            for i, ind in enumerate(population):
+                if ind.fitness.valid:
+                    continue
+                if eval_counter[0] >= max_fes:
+                    break
+                vec = list(ind)
+                _f, hcv, scv, rooms = problem.evaluate_full(vec)
+                eval_counter[0] += 1
+                vec, rooms, hcv, scv, fitness = feat._ls1_apply(
+                    problem, vec, rooms, hcv, scv, s_max, rng,
+                )
+                new_ind = make_individual(vec)
+                new_ind.fitness.values = (float(fitness),)
+                population[i] = new_ind
+            population = [ind for ind in population if ind.fitness.valid]
+            if not population:
+                break
+
         if record_history:
             fitnesses = np.array([ind.fitness.values[0] for ind in population])
             positions = np.array([list(ind) for ind in population], dtype=float)

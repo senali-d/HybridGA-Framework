@@ -320,9 +320,56 @@ VARIANTS = [
     # Yang & Jat 2011 SSGA (Algorithm 1) IS the suite baseline:
     # configs/timetabling.json sets loop=steady_state plus the LS1 refine
     # block and the paper's exact operator names. No separate Spec needed
-    # — running `--suite timetabling` already runs SSGA. Add additional
-    # Specs here only when defining proper variants (e.g. GSGA, EGSGA)
-    # that override one or more operator slots.
+    # — running `--suite timetabling` already runs SSGA.
+    #
+    # UCTP-native versions of the 13 originally-REAL features. Each preserves
+    # its named feature's metaphor — DE differential, SHADE current-to-pbest,
+    # MMAS τ_min/τ_max bounds, BFO swim-tumble, krill food+herd+drift, SOS
+    # mut/comm/paras, BBO migration, GSA mass-weighted attraction — but
+    # rewrites the update in terms of N1/N2/N3 moves and Hamming similarity
+    # on the timeslot integer vector. See features.py F94–F106.
+    Spec("SGA+DE_mut",
+         mutate=feat.make_de_uctp(F=0.5),
+         encodings=DISCRETE),
+    Spec("SGA+SHADE_mut",
+         mutate=feat.make_shade_uctp(),
+         encodings=DISCRETE),
+    Spec("SGA+restart",
+         diversity=feat.make_diversity_restart_uctp(stagnation_threshold=15,
+                                                    restart_fraction=0.2),
+         encodings=DISCRETE),
+    Spec("SGA+pher_minmax",
+         mutate=feat.make_pheromone_minmax_uctp(rho=0.1,
+                                                tau_min=0.1, tau_max=5.0),
+         encodings=DISCRETE),
+    Spec("SGA+immune_memory",
+         diversity=feat.make_immune_memory_pool_uctp(k_inject=2,
+                                                     dist_thresh_frac=0.05),
+         encodings=DISCRETE),
+    Spec("SGA+net_suppress",
+         diversity=feat.make_network_suppression_uctp(threshold_frac=0.02),
+         encodings=DISCRETE),
+    Spec("SGA+cuckoo_discovery",
+         diversity=feat.make_cuckoo_discovery_uctp(pa=0.25),
+         encodings=DISCRETE),
+    Spec("SGA+abc_scout",
+         replace=feat.make_abc_scout_uctp(),
+         encodings=DISCRETE),
+    Spec("SGA+bfo_chemotaxis",
+         mutate=feat.make_bfo_chemotaxis_uctp(N_s=4),
+         encodings=DISCRETE),
+    Spec("SGA+krill_herd_mut",
+         mutate=feat.make_krill_herd_uctp(),
+         encodings=DISCRETE),
+    Spec("SGA+sos_mut",
+         mutate=feat.make_sos_uctp(),
+         encodings=DISCRETE),
+    Spec("SGA+bbo_migration_cx",
+         crossover=feat.crossover_bbo_uctp,
+         encodings=DISCRETE),
+    Spec("SGA+gsa_full_mut",
+         mutate=feat.make_gsa_full_uctp(),
+         encodings=DISCRETE),
 ]
 
 
