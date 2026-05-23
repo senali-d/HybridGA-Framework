@@ -4,7 +4,7 @@
   "bound_handling": "passthrough",
   "loop": "steady_state",
   "pop_size": 50,
-  "max_fes": 12000,
+  "max_fes": 70000,
   "n_runs": 30,
   "init":      {"kind": "random_int_vector"},
   "selection": {"kind": "tournament", "k": 2},
@@ -14,7 +14,7 @@
   "refine":    {"kind": "ls1", "s_max": 20},
   "elitism":   {"k": 1},
   "stopping":  "fe_budget",
-  "_stopping_note": "Yang & Jat 2011 SSGA (Algorithm 1) + LS1 (Algorithm 2). pc=0.8, pm=0.5, pop=50 from paper §V (p. 99). C=10^6 HCV weight. Paper uses wall-clock budgets (90s small, 900s medium, 9000s large); the runner only supports FE-budget stopping today — `max_fes` here is sized for medium instances. Override per-tier via CLI: `--functions easy01,... --max-fes 7000` for small, leave default for medium, `--max-fes 70000` for hard/comp16-20.",
+  "_stopping_note": "Yang & Jat 2011 SSGA (Algorithm 1) + LS1 (Algorithm 2). pc=0.8, pm=0.5, pop=50 from paper §V (p. 99). C=10^6 HCV weight. Paper uses wall-clock budgets (90s small, 900s medium, 9000s large); the runner only supports FE-budget stopping today. `max_fes=70000` is sized for the large tier (paper Fig. 4(d) shows EGSGA plateauing near 60-70k FE). Small/medium instances overshoot harmlessly but burn extra wall-time; override per-tier via CLI for paper-faithful budgets: `--functions easy01,... --max-fes 5000` (small), `--max-fes 12000` (medium).",
   "instances": [
     "easy01", "easy02", "easy03", "easy04", "easy05",
     "medium01", "medium02", "medium03", "medium04", "medium05",
