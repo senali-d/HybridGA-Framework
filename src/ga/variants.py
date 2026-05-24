@@ -219,7 +219,7 @@ VARIANTS = [
     # versions preserve the named feature — binned per-dim pheromone with
     # the same deposit scheme (MMAS / EAS / ASrank) plus a PSO sub-swarm
     # refine — so the ablation against the real-coded baseline reflects
-    # the same idea on continuous suites (cec2022, engineering, separable).
+    # the same idea on continuous suites (cec2022, cec2020_realworld).
     # deposit=False on crossover: the named mutate scheme (MMAS/ASrank/EAS)
     # owns the per-gen evaporate+deposit, otherwise crossover's "as" deposit
     # fires first and the once-per-gen guard suppresses the named scheme.
@@ -318,7 +318,7 @@ VARIANTS = [
 
     # --- UCTP / timetabling --------------------------------------------
     # Yang & Jat 2011 SSGA (Algorithm 1) IS the suite baseline:
-    # configs/timetabling.json sets loop=steady_state plus the LS1 refine
+    # configs/uctp.json sets loop=steady_state plus the LS1 refine
     # block and the paper's exact operator names. No separate Spec needed
     # — running `--suite timetabling` already runs SSGA.
     #

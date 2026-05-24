@@ -15,7 +15,7 @@ for i in "${!FUNCS[@]}"; do
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting $fn"
     echo "============================================================"
 
-    python scripts/run_experiments.py --suite engineering --exact --pop-size 100 --max-fes 200000 --n-runs 30 --workers 8 --functions "$fn" --tag "engineering_${fn}_$(date '+%Y%m%d_%H%M%S')" --variants "$VARIANTS"
+    python scripts/run_experiments.py --suite cec2020_realworld --exact --pop-size 100 --max-fes 200000 --n-runs 30 --workers 8 --functions "$fn" --tag "engineering_${fn}_$(date '+%Y%m%d_%H%M%S')" --variants "$VARIANTS"
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] Finished $fn"
 

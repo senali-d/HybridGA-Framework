@@ -3882,7 +3882,7 @@ def crossover_bbo_perm(p1, p2, ctx):
 # ------------------------------------------------------------
 # Steady-state GA building blocks for the University Course Timetabling
 # Problem. These pair with `run_ssga` in `ga.core` and the `UCTPProblem`
-# evaluator in `benchmarks.timetabling` (which exposes `evaluate_full`
+# evaluator in `benchmarks.uctp` (which exposes `evaluate_full`
 # and `assign_rooms` for delta-style updates).
 #
 #   replace_worst        — worst-of-pop replacement (Algorithm 1, line 9)
@@ -3903,7 +3903,7 @@ def replace_worst(parents, offspring, ctx):
     return keep + list(offspring)
 
 
-_UCTP_N_TIMESLOTS = 45  # matches benchmarks.timetabling.N_TIMESLOTS
+_UCTP_N_TIMESLOTS = 45  # matches benchmarks.uctp.N_TIMESLOTS
 
 
 def mutate_ssga_n1n2n3(ind, ctx):
