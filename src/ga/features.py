@@ -4115,6 +4115,13 @@ def make_diversity_restart_uctp(stagnation_threshold=15, restart_fraction=0.2):
 # F97 — UCTP MMAS τ_min/τ_max pheromone
 # ------------------------------------------------------------
 def make_pheromone_minmax_uctp(rho=0.1, tau_min=0.1, tau_max=5.0):
+    # Deposit is a *constant* scaled to the τ dynamic range — UCTP fitness
+    # is HCV-dominated (≥10^6 when infeasible), so the REAL pher_minmax's
+    # `1/(1+f)` deposit would collapse to ~10^-7 and the pheromone would
+    # never accumulate. With deposit = (τ_max-τ_min)·rho the best slots
+    # converge to ~τ_max while uninformative slots decay to τ_min,
+    # producing meaningful slot-sampling bias regardless of fitness scale.
+    deposit = max((tau_max - tau_min) * rho, 1e-6)
     def mutate_pher_minmax_uctp(ind, ctx):
         rng = ctx["rng"]
         n = int(ctx["dim"])
@@ -4130,8 +4137,6 @@ def make_pheromone_minmax_uctp(rho=0.1, tau_min=0.1, tau_max=5.0):
             bs = ctx.get("best_so_far")
             if bs is not None:
                 bs_vec = _as_slot_vec(bs, n)
-                bs_f = _ind_fitness(bs, 0.0)
-                deposit = 1.0 / (1.0 + abs(bs_f))
                 for e in range(n):
                     tau[e, bs_vec[e]] += deposit
             np.clip(tau, tau_min, tau_max, out=tau)
