@@ -178,6 +178,46 @@ def test_uctp_registry_has_all_13_native_variants():
 
 
 @needs_socha
+@pytest.mark.parametrize("variant_name", [
+    # All variants that override the replace slot (DISCRETE-native + ANY-tagged).
+    "SGA+abc_scout", "SGA+greedy_replace", "SGA+archive_replace",
+    "SGA+metropolis_replace",
+])
+def test_uctp_replace_variants_preserve_pop_size(variant_name):
+    """SSGA contract: replace_fn must keep len(population) constant. A bug
+    in generational_elitism previously collapsed population to 2 for
+    archive_replace / abc_scout on UCTP (replace called with offspring=[child])."""
+    from ga.build import baseline_from_config, variant_from_baseline
+    from ga.core import run_trial
+    from ga.variants import VARIANTS
+    from benchmarks.timetabling import SOCHA_FUNCS
+
+    cfg = dict(json.loads((ROOT / "configs" / "timetabling.json").read_text()))
+    cfg["refine"] = {"kind": "ls1", "s_max": 1}
+    Cls = dict(SOCHA_FUNCS)["easy01"]
+    p = Cls()
+    baseline = baseline_from_config(cfg, dim=p.ndim)
+    baseline.name = "SSGA"
+    specs = {s.name: s for s in VARIANTS}
+    assert variant_name in specs, f"{variant_name} missing from registry"
+    v = variant_from_baseline(baseline, specs[variant_name])
+
+    pop_sizes = []
+    real_replace = v.replace_fn
+    def _spy(parents, offspring, ctx, _f=real_replace):
+        out = _f(parents, offspring, ctx)
+        pop_sizes.append(len(out))
+        return out
+    v.replace_fn = _spy
+    pop_size = 12
+    run_trial(p, v, pop_size=pop_size, max_fes=60, seed=0, record_history=False)
+    assert pop_sizes, "replace_fn was never called"
+    assert all(s == pop_size for s in pop_sizes), (
+        f"{variant_name} broke pop size: observed {pop_sizes[:6]}, expected all {pop_size}"
+    )
+
+
+@needs_socha
 @pytest.mark.parametrize("variant_name", UCTP_NATIVE_VARIANTS)
 def test_uctp_variant_smoke(variant_name):
     """Every UCTP-native variant runs on easy01 for a few generations and

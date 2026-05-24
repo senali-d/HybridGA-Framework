@@ -124,12 +124,19 @@ def default_mutate(ind, ctx):
 
 
 def generational_elitism(parents, offspring, k):
-    """Generational replacement with k-elitism: keep best k parents,
-    fill the rest with the best offspring. Reusable from feature variants."""
+    """k-elitism replacement: keep best k parents, fill remaining slots
+    with the best offspring. When called from a steady-state loop where
+    `len(offspring) < len(parents) - k`, the missing slots are backfilled
+    from the next-best non-elite parents — preserving the original pop
+    size (equivalent to "drop worst, append offspring" with k elites)."""
     parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
     elites = parents_sorted[:k]
     offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
-    return elites + offspring_sorted[: len(parents) - k]
+    needed = len(parents) - k
+    if len(offspring_sorted) >= needed:
+        return elites + offspring_sorted[:needed]
+    backfill = parents_sorted[k:k + (needed - len(offspring_sorted))]
+    return elites + list(offspring_sorted) + backfill
 
 
 def default_replace(parents, offspring, ctx):
@@ -1189,10 +1196,20 @@ def run_ssga(
         child.fitness.values = (float(fitness),)
 
         # ---- Replacement: drop worst, append child ----
+        prev_size = len(population)
         population = replace_fn(population, [child], ctx)
-        # Defensive: replace_fn must not change pop size for SSGA.
         if len(population) == 0:
             break
+        # Replace_fn MUST preserve population size for SSGA. Diversity
+        # injection can resize later; the replace slot itself cannot.
+        if len(population) != prev_size:
+            raise RuntimeError(
+                f"SSGA replace_fn {getattr(replace_fn, '__name__', replace_fn)!r} "
+                f"changed population size: {prev_size} -> {len(population)}. "
+                "Steady-state replace must return exactly len(parents) "
+                "individuals (replace_worst, replace_greedy, replace_metropolis, "
+                "and the *_uctp adapters all do this)."
+            )
 
         # ---- Track best ----
         cur_best = min(population, key=lambda x: x.fitness.values[0])
