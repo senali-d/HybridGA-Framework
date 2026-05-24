@@ -1,37 +1,82 @@
-# SGA + Nature-Inspired Features
+# HybridGA-Framework
 
-A clean experimental pipeline to study how features extracted from recent
-nature-inspired algorithms affect the behavior of the Simple Genetic
-Algorithm. Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022 functions)
-+ **pymoo** (separable problems) + **SciPy** (statistical tests).
+A clean experimental pipeline for studying how features extracted from
+nature-inspired metaheuristics affect the behavior of the Simple Genetic
+Algorithm (SGA). Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022) +
+**SciPy** (statistical tests).
 
-Three benchmark categories are supported:
+The framework evaluates **17 named experiments** (1 baseline + 16 feature
+variants) across **four problem suites**:
 
-| Suite | Problem class | Functions | Dim | Notes |
+| Suite (`--suite`) | Problem class | Count | Encoding | Notes |
 |---|---|---|---|---|
-| `cec2022` | Boundary-constrained black-box (CEC 2022 single-objective) | F1–F12 | {2, 10, 20} | Default; competition protocol |
-| `separable` | Classical separable scalable functions | Sphere, Rastrigin, Schwefel, SumOfDifferentPowers, Step | any | For diagnostics / unit-feature isolation |
-| `engineering` | CEC2020 Real-World Constrained Optimization (mechanical subset) | TensionCompressionSpring, PressureVessel, WeldedBeam, ThreeBarTruss, SpeedReducer | fixed (2–7) | Ported verbatim from `cec20_func.m` (RC-15/17/18/19/20); Deb feasibility-rule encoding into scalar fitness |
-| `tsp` | Travelling Salesman Problem (TSPLIB EUC_2D) | eil51, berlin52, kroA100, ch150, kroA200 | per instance (51–200) | Permutation encoding; OX crossover, swap/inversion mutation |
+| `cec2022` | CEC 2022 single-objective black-box | 12 (F1–F12) | real | D ∈ {2, 10, 20}; competition protocol |
+| `cec2020_realworld` | CEC 2020 Real-World constrained design | 5 | real | Fixed D (3–7); Deb feasibility-rule scalar fitness |
+| `tsp` | Travelling Salesman (TSPLIB EUC_2D) | 6 instances | permutation | EAX crossover baseline |
+| `uctp` | University Course Timetabling (Socha 2002 + TTC 2002) | 30 instances | discrete | Yang & Jat 2011 SSGA + LS1 baseline |
+
+## The 17 experiments
+
+The baseline **`SGA_baseline`** is built from each suite's JSON config (its
+default operators differ by encoding). On top of it, **16 variants** are
+defined, each overriding exactly one operator slot:
+
+| Variant | Slot | Idea |
+|---|---|---|
+| `SGA+DE_mut` | mutation | DE/rand/1 differential mutation |
+| `SGA+SHADE_mut` | mutation | Success-history adaptive DE (SHADE) |
+| `SGA+greedy_replace` | replacement | Greedy one-to-one parent/child compare |
+| `SGA+archive_replace` | replacement | External elite archive injection |
+| `SGA+metropolis_replace` | replacement | Simulated-annealing acceptance |
+| `SGA+restart` | diversity | Stagnation-triggered population restart |
+| `SGA+pher_minmax` | mutation / crossover | MMAS pheromone bounds (τ_min/τ_max) |
+| `SGA+immune_memory` | diversity | Memory-pool injection (AIS) |
+| `SGA+net_suppress` | diversity | Network-suppression diversity (AIS) |
+| `SGA+cuckoo_discovery` | diversity | Cuckoo abandon-and-rebuild |
+| `SGA+abc_scout` | replacement | ABC scout-bee re-init |
+| `SGA+bfo_chemotaxis` | mutation | BFO swim/tumble chemotaxis |
+| `SGA+krill_herd_mut` | mutation | Krill food + herd + drift |
+| `SGA+sos_mut` | mutation | SOS mutualism/commensalism/parasitism |
+| `SGA+bbo_migration_cx` | crossover | BBO habitat migration |
+| `SGA+gsa_full_mut` | mutation | GSA mass-weighted gravitational attraction |
+
+Each variant has up to three implementations (`make_*`, `make_*_perm`,
+`make_*_uctp`) so it can run on every suite. The runner selects the right
+one automatically by encoding.
 
 ## Project layout
 
 ```
 HybridGA-Framework/
 ├── src/
-│   ├── ga/              # SGA backbone + nature-inspired feature plug-ins
-│   │   ├── core.py
-│   │   └── features.py
-│   ├── benchmarks/      # Suite wrappers + multi-variant protocol runners
-│   │   ├── suites.py        # cec2022 + separable + engineering registries
-│   │   └── engineering.py   # CEC2020-RW mechanical subset (5 problems)
-│   └── analysis/        # Statistical summaries (Wilcoxon, Friedman, plotting)
-│       └── stats.py
+│   ├── ga/
+│   │   ├── core.py         # SGA + SSGA loops, default operators, FeatureConfig
+│   │   ├── features.py     # All 16 variants' implementations (real / perm / uctp)
+│   │   ├── variants.py     # Spec registry — wires features into named variants
+│   │   └── build.py        # baseline_from_config + variant_from_baseline
+│   ├── benchmarks/
+│   │   ├── cec2022_functions.py    # 12 CEC 2022 functions (F1–F12)
+│   │   ├── cec2020_realworld.py    # 5 CEC 2020-RW engineering problems
+│   │   ├── tsp.py                  # 6 TSPLIB EUC_2D instances
+│   │   ├── uctp.py                 # 30 UCTP instances (Socha 2002 + TTC 2002)
+│   │   └── protocols.py            # Multi-variant runner + per-suite wrappers
+│   ├── analysis/           # stats.py (Wilcoxon/Friedman/Holm/Nemenyi) + plots.py
+│   └── persistence/        # recorder.py (JSON + parquet archives)
 ├── scripts/
-│   └── run_experiments.py   # CLI entry point
-├── results/             # Raw JSON outputs (gitignored)
-├── pyproject.toml
-└── README.md
+│   ├── run_experiments.py          # Primary CLI entry point
+│   ├── fetch_tsplib.py             # One-time: download TSPLIB .tsp files
+│   ├── fetch_socha.py              # One-time: download Socha 2002 .tim files
+│   ├── fetch_ttc2002.py            # One-time: download TTC 2002 .tim files
+│   ├── analyze_experiment.py       # Post-hoc stats on a single archive
+│   └── merge_and_analyze.py        # Merge & analyze multiple archives
+├── configs/
+│   ├── cec2022.json
+│   ├── cec2020_realworld.json
+│   ├── tsp.json
+│   └── uctp.json
+├── tests/                  # pytest smoke + suite-specific checks
+├── results/                # Per-run archives (gitignored)
+└── pyproject.toml
 ```
 
 ## Quick start
@@ -45,292 +90,209 @@ source venv/bin/activate          # macOS / Linux
 # 2. Install the project + all dependencies
 pip install -e .
 
-# 3. Every new shell, just reactivate:
-#    source venv/bin/activate
+# 3. Run smoke tests (~30 s) before any long protocol run
+pytest tests/ -q
+```
 
-# Demo: small budget, ~20 min on one core, sanity-check the pipeline
+### One-time data fetches (TSP & UCTP)
+
+The TSPLIB `.tsp` files and Socha/TTC `.tim` files are not bundled. Run
+the fetchers once after install:
+
+```bash
+python scripts/fetch_tsplib.py     # -> data/tsplib/
+python scripts/fetch_socha.py      # -> data/socha/
+python scripts/fetch_ttc2002.py    # -> data/ttc2002/
+```
+
+Re-running is safe — existing files are skipped unless you pass `--force`.
+
+## Running experiments
+
+The CLI follows the same pattern for every suite:
+
+```bash
+python scripts/run_experiments.py --suite <suite> [flags]
+```
+
+### CEC 2022 (real-coded, default)
+
+```bash
+# Demo: small budget, ~3 min on one core
 python scripts/run_experiments.py
 
-# Full CEC 2022 protocol: 12 functions, 30 runs, MaxFES per spec
-python scripts/run_experiments.py --full --dim 10
-python scripts/run_experiments.py --full --dim 20
+# Full competition protocol: 12 functions × 30 runs × MaxFES per CEC 2022 spec
+python scripts/run_experiments.py --full --dim 10                # MaxFES 200k
+python scripts/run_experiments.py --full --dim 20 --workers 8    # MaxFES 1M
 
-# Custom budget — every protocol parameter is a flag
-python scripts/run_experiments.py --pop-size 40 --max-gen 200 --n-runs 10
-python scripts/run_experiments.py --dim 20 --max-fes 50000 --workers 8
-
-# Restrict to a subset of CEC 2022 functions (single or multiple)
-python scripts/run_experiments.py --variants SGA_baseline --functions F1
-python scripts/run_experiments.py --functions F1,F3,F7 --workers 6
-
-# Separable suite (diagnostics / per-feature isolation; --dim is honored)
-python scripts/run_experiments.py --suite separable --dim 30
-python scripts/run_experiments.py --suite separable --functions Sphere,Step
-
-# Engineering suite (constrained design problems; fixed dim, --dim ignored)
-python scripts/run_experiments.py --suite engineering
-python scripts/run_experiments.py --suite engineering --full           # 50k FEs/run
-python scripts/run_experiments.py --suite engineering --functions WeldedBeam
+# Subset of functions / variants
+python scripts/run_experiments.py --functions F1,F3,F7
+python scripts/run_experiments.py --variants DE_mut,SHADE_mut --exact
 ```
 
-### Engineering suite specifics
+### CEC 2020 Real-World (engineering)
 
-The engineering problems are **fixed-dimensionality** (Spring=3, PressureVessel=4,
-WeldedBeam=4, SpeedReducer=7), so `--dim` is ignored when `--suite engineering`.
-Constraints are handled via **Deb's feasibility rules encoded into a scalar
-fitness**:
+Each problem has fixed dimensionality (3–7), so `--dim` is ignored.
+Constraints are encoded into scalar fitness via Deb's feasibility rules
+(every operator works unchanged).
 
+```bash
+python scripts/run_experiments.py --suite cec2020_realworld
+python scripts/run_experiments.py --suite cec2020_realworld --full
+python scripts/run_experiments.py --suite cec2020_realworld --functions WeldedBeam
 ```
-feasible   →  evaluate(x) = f(x)             (always < F_OFFSET)
-infeasible →  evaluate(x) = F_OFFSET + Σ max(0, g_i(x))
+
+| Problem | NDIM | Notes |
+|---|---|---|
+| TensionCompressionSpring | 3 | RC-15 |
+| PressureVessel           | 4 | RC-17; discrete thicknesses snap to 0.0625″ |
+| WeldedBeam               | 4 | RC-18 |
+| ThreeBarTruss            | 2 | RC-19 |
+| SpeedReducer             | 7 | RC-20; integer teeth count |
+
+A solution is feasible iff `best_fitness < F_OFFSET` (per-problem constant
+exposed on the class).
+
+### TSP (TSPLIB EUC_2D)
+
+Permutation encoding. Baseline uses **EAX crossover** + swap mutation.
+Each instance has a fixed city count baked into its `.tsp` file, so
+`--dim` is ignored.
+
+```bash
+# Smoke
+python scripts/run_experiments.py --suite tsp
+
+# Full protocol: 6 instances × 30 runs × 50k FEs each
+python scripts/run_experiments.py --full --suite tsp --workers 8
+
+# Subset of instances
+python scripts/run_experiments.py --suite tsp --functions eil51,kroA100
 ```
-
-This means *every existing GA operator works unchanged* — no constraint
-handling needs to be added to selection/replacement. To check whether the
-best solution of a run is feasible, compare `best_fitness < F_OFFSET`.
-Discrete variables (vessel thicknesses snap to 0.0625″ multiples; reducer
-teeth count is integer) are canonicalized inside `evaluate()`.
-
-Default budget under `--full` for the engineering suite is **30,000 FEs/run**
-(low-D problems; literature-standard).
-
-### TSP suite (TSPLIB)
-
-Permutation-encoded Travelling Salesman Problem on five canonical TSPLIB
-EUC_2D instances. The SGA uses **random-permutation init**, **Order
-Crossover (OX)**, and **swap mutation** (with inversion as an alternative,
-configured in `configs/tsp.json`). Fitness is the closed-tour length under
-TSPLIB's nearest-integer Euclidean distance convention.
 
 | Instance | Cities | Known optimum |
 |---|---|---|
 | eil51    |  51 | 426    |
 | berlin52 |  52 | 7,542  |
+| st70     |  70 | 675    |
 | kroA100  | 100 | 21,282 |
 | ch150    | 150 | 6,528  |
 | kroA200  | 200 | 29,368 |
 
-#### One-time setup: fetch TSPLIB instances
+### UCTP (timetabling)
 
-The `.tsp` files are not bundled. Run the fetcher once after install:
-
-```bash
-python scripts/fetch_tsplib.py
-```
-
-This downloads the five instances into `data/tsplib/` from a public
-TSPLIB mirror (with the official Heidelberg archive as a fallback).
-Re-running is safe — existing files are skipped unless you pass `--force`.
-Set `TSPLIB_DIR` to point at an existing TSPLIB copy if you already have
-one locally.
-
-#### Running the TSP suite
+Discrete encoding (one timeslot integer per event). Baseline is the
+**Yang & Jat 2011 Steady-State GA + LS1 local search** (Algorithms 1+2);
+`configs/uctp.json` sets `loop=steady_state` + the LS1 refine block.
 
 ```bash
-# Smoke (small budget): all 5 instances, 1 seed each
-python scripts/run_experiments.py --suite tsp
+# Smoke run on one instance
+python scripts/run_experiments.py --suite uctp --functions easy01
 
-# Full protocol: 5 instances × 30 runs × 50,000 FEs each
-python scripts/run_experiments.py --full --suite tsp
+# Full protocol (30 instances; this is multi-day on a single core)
+python scripts/run_experiments.py --full --suite uctp --workers 8
 
-# Subset of instances (comma-separated)
-python scripts/run_experiments.py --full --suite tsp --functions eil51,berlin52
-
-# Single instance, single seed, custom budget
-python scripts/run_experiments.py --suite tsp --functions kroA100 \
-    --n-runs 1 --max-fes 100000 --no-history
-
-# Parallel across (instance, seed) tuples
-python scripts/run_experiments.py --full --suite tsp --workers 8
+# Subset
+python scripts/run_experiments.py --suite uctp \
+    --functions easy01,medium03,comp05
 ```
 
-Each instance has a fixed dimensionality baked into its `.tsp` file, so
-`--dim` is ignored when `--suite tsp` (same convention as the engineering
-suite). The full-protocol budget (`pop_size=100`, `max_fes=50,000`,
-`n_runs=30`, tournament k=2, OX pc=0.9, swap pm=0.02, elitism=1) is read
-from `configs/tsp.json`; CLI flags still override individual fields.
+Instance names: `easy01..05`, `medium01..05`, `hard01..05` (Socha 2002),
+and `comp01..20` (TTC 2002).
 
-#### TSP variants
-
-The variant registry in `src/ga/variants.py` is currently real-coded only,
-so when running `--suite tsp` only the baseline executes. Permutation-
-specific variants (e.g. 2-opt local search refinement, edge-recombination
-crossover, inversion mutation as a swap alternative) can be added by
-tagging the `Spec` with `encodings=("permutation",)`:
-
-```python
-Spec("SGA+inversion_mut",
-     encodings=("permutation",),
-     mutate=...),  # operator returning a permutation
-```
-
-The runner filters variants by encoding automatically — real-coded
-variants are skipped on TSP without warning.
-
-### Protocol flags
+### Common flags
 
 | Flag | Default (demo / full) | Notes |
 |---|---|---|
-| `--suite` | `cec2022` | One of `cec2022`, `separable`, `engineering`, `tsp` |
-| `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored for `engineering` |
+| `--suite` | `cec2022` | `cec2022`, `cec2020_realworld`, `tsp`, `uctp` |
+| `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored elsewhere |
 | `--pop-size` | 30 / 50 | Population size |
-| `--max-fes` | 5000 / 200k (D≤10) or 1M (D>10) | FE budget per run |
-| `--max-gen` | — | Cap by generations instead; sets `max_fes = max_gen × pop_size` |
+| `--max-fes` | 5,000 / per-suite config | FE budget per run |
+| `--max-gen` | — | Cap by generations; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
-| `--variants` | (all) | Comma-separated substring filter, e.g. `pher,levy` |
-| `--functions` | (all in suite) | Comma-separated function names, e.g. `F1,F3,F7` (cec2022), `Sphere,Step` (separable), `WeldedBeam` (engineering), `eil51,kroA100` (tsp) |
+| `--variants` | (all) | Comma-separated substring filter, e.g. `DE_mut,SHADE_mut`. Add `--exact` to match the full name |
+| `--functions` | (all in suite) | Comma-separated function/instance names |
 | `--workers` | 1 | Process-pool size; results are seed-deterministic |
 | `--no-history` / `--no-plots` / `--no-stats` | off | Skip outputs |
 | `--tag` | timestamp | Override archive folder name |
 
-## Smoke tests
+Every run produces a per-batch archive under `results/<tag>/` containing
+`runs.parquet`, `history.parquet`, `suite_config.json`, `variants_diff.json`,
+and a `summary/` directory with the statistical analysis output.
 
-Cheap (~2 s) parametrized tests that run **every variant** in
-`build_variants()` for one tiny trial (D=10, pop=12, MaxFES=200) on F1.
-They assert no exceptions, in-bounds solutions, non-negative error, FE
-budget respected, plus seed reproducibility, islands+diversity, and
-*coverage*: every public feature in `ga.features` must be wired into at
-least one variant.
+## Feature injection
 
-```bash
-pip install pytest                     # one-time
-
-# Run all smoke tests
-pytest tests/ -q
-
-# Run a single feature's smoke test
-pytest tests/test_smoke.py -k "Levy_mut" -q
-
-# Verbose, show every variant pass/fail
-pytest tests/ -v
-```
-
-Run these before kicking off any long protocol run — a 2-second test catches
-operator-shape regressions that would otherwise blow up partway through a
-multi-day full run.
-
-## How feature injection works
-
-Every variant is a `FeatureConfig` object that overrides one or more of the
-SGA's plug-points. The default operators stay in place for everything not
-overridden, so you can isolate the effect of a single feature.
+Every variant is just a `FeatureConfig` with overridden plug-points; the
+default operators stay in place for slots you don't touch.
 
 ```python
 from ga.core import FeatureConfig, run_sga
 from ga import features as feat
-from opfunu.cec_based.cec2022 import F12022
+from benchmarks.cec2022_functions import CEC2022_FUNCS
 
-# Define a variant that injects Lévy-flight mutation
 variant = FeatureConfig(
-    name="SGA+Levy_mut",
-    mutate_fn=feat.mutate_levy,
+    name="SGA+DE_mut",
+    mutate_fn=feat.make_de_mutation(F=0.5),
+    select_wrapper=feat.with_population_aware_select,
 )
 
-problem = F12022(ndim=10)
+problem = dict(CEC2022_FUNCS)["F1"](ndim=10)
 result = run_sga(problem, variant, pop_size=50, max_fes=200_000, seed=0)
-print(f"Best fitness: {result['best_fitness']}")
-print(f"Error vs F*: {result['error']}")
+print(f"Best fitness: {result['best_fitness']}, error: {result['error']}")
 ```
 
-## What's implemented (Tier 1 + Tier 2 from the framework)
+## Statistical analysis
 
-| Feature ID | Name | Plug-point |
-|---|---|---|
-| F02 | Chaotic-map init (logistic) | init_fn |
-| F03 | Opposition-based init | init_fn |
-| F06 | GWO leader-hierarchy selection | select_fn |
-| F13 | Lévy-flight mutation | mutate_fn |
-| F17 | DE/rand/1 differential mutation | mutate_fn |
-| F36 | Greedy one-to-one replacement | replace_fn |
-| F39 | Stagnation-triggered restart | diversity_fn |
-| F40 | Linearly decreasing mutation rate | mutate_fn |
+After each run, `summarize()` produces:
 
-Add Tier 3 features by writing more functions in `src/ga/features.py` matching
-the same signatures, then registering them in `build_variants()` inside
-`scripts/run_experiments.py`.
+1. **Mean error table** across all (variant, function) pairs
+2. **Wilcoxon signed-rank** of each variant vs baseline (per function), as
+   wins / ties / losses at α = 0.05
+3. **Friedman test** across the suite with mean ranks per variant
+4. **Holm post-hoc** pairwise Wilcoxon (FWER-controlled) and **Nemenyi**
+5. **Cliff's delta** effect sizes vs baseline, with magnitude labels
+
+For comparing multiple separate runs (e.g. baseline first, then a variant
+batch), merge their archives post-hoc:
+
+```bash
+python scripts/merge_and_analyze.py \
+    --archives results/exp_*_baseline results/exp_*_variants \
+    --baseline SGA_baseline \
+    --out results/merged_analysis
+```
+
+Merged archives must share `--dim`, `--max-fes`, `--pop-size`, and the seed
+set (Wilcoxon is paired by seed index).
+
+## Smoke tests
+
+```bash
+pytest tests/ -q                       # all tests (~30 s)
+pytest tests/test_smoke.py -v          # variant-by-variant smoke
+pytest tests/test_tsp.py -q            # TSP-specific
+pytest tests/test_timetabling.py -q    # UCTP-specific
+```
+
+The smoke suite runs every variant in the registry on a tiny budget (D=10,
+pop=12, MaxFES=200) on F1 to catch operator-shape regressions before any
+multi-day run.
+
+## Compute notes
+
+- **Demo** (`--n-runs 5`, `--max-fes 5000`, 17 experiments × 12 functions):
+  ~3 min on one core.
+- **Full CEC 2022 at D=10** (30 runs, MaxFES=200k, 17 experiments × 12
+  functions): ~1–2 h per variant on one core. Use `--workers N` to
+  parallelize across `(variant, function, seed)` tuples.
+- **Full at D=20** is ~5× heavier per variant.
+- **UCTP full protocol** (30 instances × 30 runs × 500k FEs) is the
+  heaviest suite; budget at least a full day on `--workers 8`.
 
 ## CEC 2022 protocol compliance
 
-- **Suite:** 12 functions (F1–F12), search range [-100, 100]^D
+- **Suite:** 12 functions (F1–F12), search range [-100, 100]ᴰ
 - **Dimensions:** 10 and 20
 - **MaxFES:** 200,000 (D=10) / 1,000,000 (D=20)
 - **Independent runs:** 30 per (variant, function)
 - **Reported metric:** error = f(x_best) − F*; values < 1e-8 set to 0
-
-## Statistical analysis
-
-`summarize()` produces:
-
-1. **Mean error table** across all (variant, function) pairs
-2. **Wilcoxon signed-rank test** of each variant vs baseline (per function),
-   reported as wins / ties / losses at α = 0.05
-3. **Friedman test** across the full suite with mean ranks per variant
-4. **Holm post-hoc** pairwise Wilcoxon (FWER-controlled) and **Nemenyi**
-   post-hoc on the Friedman matrix
-5. **Cliff's delta** effect sizes vs baseline, with magnitude labels
-
-## Merging multiple experiment archives
-
-When variants are run in separate batches (e.g., baseline first, then variants
-later), merge their `runs.parquet` files post-hoc to compute Wilcoxon /
-Friedman / Holm / Nemenyi / Cliff's delta across the combined set:
-
-```bash
-python scripts/merge_and_analyze.py \
-    --archives results/exp_*_baseline_v2 \
-               results/exp_*_pher_batch \
-               results/exp_*_levy_batch \
-    --baseline SGA_baseline \
-    --out results/merged_analysis_full
-```
-
-The output folder contains the same `summary/` files that a single multi-variant
-run would produce. Duplicate `(variant, function, seed)` rows are de-duplicated
-(last occurrence wins), so re-running a variant won't double-count.
-
-**Validity requirements:** all merged archives must use the same `--dim`,
-`--max-fes`, `--pop-size`, and seed set. Wilcoxon is paired by seed index, so
-mismatched configurations break the comparison.
-
-## Compute notes
-
-- **Demo run** (5 runs, MaxFES=5000, ~75 variants, 12 functions): ~3 minutes
-- **Full run** at D=10 (30 runs, MaxFES=200k, ~75 variants, 12 functions):
-  roughly 1–2 hours per variant on a single core; with the full variant set
-  this is multi-day on one core. Use `--workers N` to parallelize across
-  `(variant, function, seed)` tuples on N processes (fork-based, so feature
-  closures are fine; results are seed-deterministic).
-- **Full run at D=20** is roughly 5× heavier per variant.
-
-```bash
-python scripts/run_experiments.py --full --dim 10 --workers 8
-python scripts/run_experiments.py --variants pher,levy --workers 4
-```
-
-## Behavioral metrics (in `history` dict)
-
-When `record_history=True`, each generation logs:
-- `gen`, `fes`: generation index and FE count
-- `best_fitness`, `mean_fitness`: convergence indicators
-- `diversity`: mean per-dimension std of population (population spread)
-
-Use these to plot exploration/exploitation behavior per variant.
-For the official Hussain et al. (2019) exploration/exploitation ratio,
-add per-dimension diversity tracking and compute Div(t)/Div_max as the
-exploration percentage.
-
-## Caveats and known simplifications
-
-1. **Opposition-based init** is simplified — strict OBL evaluates 2n points
-   and keeps the best n, costing extra FEs at start. Implement that if you
-   want to follow Tizhoosh (2005) exactly.
-2. **DE mutation** uses DE/rand/1; for stronger results try DE/best/2 or
-   self-adaptive SHADE-style F and CR.
-3. **Population size and elitism** are held fixed across variants for
-   fair comparison. Don't tune per-variant — that's how papers get accused
-   of cherry-picking.
-
-## References
-
-See the framework PDF for the full reference list (37 entries covering the
-20 algorithms, CEC 2022, methodology, and the metaphor critique literature).
