@@ -1127,6 +1127,13 @@ def run_ssga(
         ctx["_population"] = list(population)
 
         # ---- Selection: two parents via tournament ----
+        # Capture pre-/post-selection fitness for Mühlenbein selection
+        # intensity (same metric as run_sga; stored under the legacy column
+        # name `selection_pressure`).
+        pre_select_fits = np.array(
+            [ind.fitness.values[0] if ind.fitness.valid else float("inf")
+             for ind in population]
+        )
         raw_parents = select_fn(population, 2, ctx)
         parents = []
         for p in raw_parents:
@@ -1142,17 +1149,33 @@ def run_ssga(
             parents.append(creator.Individual(list(population[0])))
             parents[-1].fitness.values = population[0].fitness.values
         p1, p2 = parents[0], parents[1]
+        post_select_fits = np.array(
+            [ind.fitness.values[0] if ind.fitness.valid else float("inf")
+             for ind in parents]
+        )
+        pre_std = float(np.std(pre_select_fits))
+        if pre_std > 1e-30 and np.all(np.isfinite(post_select_fits)):
+            selection_pressure = float(
+                abs(np.mean(post_select_fits) - np.mean(pre_select_fits))
+                / pre_std
+            )
+        else:
+            selection_pressure = 0.0
 
         # ---- Crossover (one child per generation per Algorithm 1) ----
+        cx_applied = False
         if rng.random() < config.cx_prob:
             c1, _c2 = crossover_fn(p1, p2, ctx)
             child_vec = list(c1)
+            cx_applied = True
         else:
             child_vec = list(p1)
 
         # ---- Mutation ----
+        mut_applied = False
         if rng.random() < config.mut_prob:
             child_vec = mutate_fn(child_vec, ctx)
+            mut_applied = True
 
         # ---- Evaluate + LS1 (1 FE for the pre-LS1 full eval) ----
         if eval_counter[0] >= max_fes:
@@ -1208,6 +1231,21 @@ def run_ssga(
                 break
 
         if record_history:
+            # Per-gen operator metrics (single child / single trial). Compared
+            # against post-LS1 parent fitness — the comparison reflects whether
+            # the (cx/mut + LS1) pipeline beat the parent rather than the raw
+            # operator in isolation, since LS1 is intrinsic to SSGA's design.
+            child_fit = float(child.fitness.values[0])
+            p1_fit = float(p1.fitness.values[0]) if p1.fitness.valid else float("inf")
+            p2_fit = float(p2.fitness.values[0]) if p2.fitness.valid else float("inf")
+            mut_success_rate = 1.0 if (mut_applied and child_fit < p1_fit) else 0.0
+            cx_success_rate = (
+                1.0 if (cx_applied and child_fit < min(p1_fit, p2_fit)) else 0.0
+            )
+            mean_step_size = float(np.linalg.norm(
+                np.asarray(child, dtype=float) - np.asarray(p1, dtype=float)
+            ))
+
             fitnesses = np.array([ind.fitness.values[0] for ind in population])
             positions = np.array([list(ind) for ind in population], dtype=float)
             diversity_std = float(np.mean(np.std(positions, axis=0)))
@@ -1224,10 +1262,12 @@ def run_ssga(
                 "xpl_pct": xpl_pct,
                 "xpt_pct": 100.0 - xpl_pct,
                 "stagnation_count": int(ctx["stagnation_counter"]),
-                "mut_success_rate": 0.0,
-                "cx_success_rate": 0.0,
-                "mean_step_size": 0.0,
-                "selection_pressure": 0.0,
+                "mut_success_rate": mut_success_rate,
+                "cx_success_rate": cx_success_rate,
+                "mean_step_size": mean_step_size,
+                "selection_pressure": (
+                    selection_pressure if np.isfinite(selection_pressure) else 0.0
+                ),
             })
 
     error = float(best.fitness.values[0]) - float(problem.f_global)
