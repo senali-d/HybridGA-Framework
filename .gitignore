@@ -34,8 +34,3 @@ dist/
 
 # Experiment outputs
 results/
-
-# Benchmark data fetched at runtime (run scripts/fetch_tsplib.py to populate)
-data/tsplib/
-# UCTP / Socha 2002 instances (run scripts/fetch_socha.py to populate)
-data/socha/
