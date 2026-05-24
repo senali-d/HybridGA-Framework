@@ -1,15 +1,28 @@
 {
   "suite": "timetabling",
   "encoding": "discrete",
-  "pop_size": 50,
+  "bound_handling": "passthrough",
+  "loop": "steady_state",
+  "pop_size": 100,
+  "max_fes": 500000,
   "n_runs": 30,
+  "init":      {"kind": "random_int_vector"},
   "selection": {"kind": "tournament", "k": 2},
-  "crossover": {"kind": "day_exchange", "pc": 0.8},
-  "mutation":  {"kind": "move_event", "pm": 0.10, "alt": "swap_event"},
-  "elitism": {"k": 1},
-  "constraint_handling": "weighted_penalty",
-  "stopping": "itc2007_time_limit",
-  "_stopping_note": "Halt at the ITC-2007 official wall-clock limit reported by the benchmark's per-machine timer tool (runtime varies by hardware; not an FE-count budget).",
-  "track": "ITC-2007 Track 2 or Track 3",
-  "_note": "ITC-2007 problem evaluators and the day_exchange/move_event operators are not yet wired into src/benchmarks or src/ga/core factories. The runner will warn and skip until they are added."
+  "crossover": {"kind": "ssga_uniform_slot", "pc": 0.8},
+  "mutation":  {"kind": "ssga_n1n2n3", "pm": 0.5},
+  "replace":   {"kind": "worst"},
+  "refine":    {"kind": "ls1", "s_max": 20},
+  "elitism":   {"k": 1},
+  "stopping":  "fe_budget",
+  "_stopping_note": "Yang & Jat 2011 SSGA (Algorithm 1) + LS1 (Algorithm 2). pc=0.8, pm=0.5 from paper §V (p. 99). C=10^6 HCV weight. Defaults `pop_size=100, max_fes=500000` (~5000 generations) put timetabling on the same budget tier as TSP/engineering. Override via CLI: `--pop-size`, `--max-fes`, `--n-runs`, `--functions`.",
+  "instances": [
+    "easy01", "easy02", "easy03", "easy04", "easy05",
+    "medium01", "medium02", "medium03", "medium04", "medium05",
+    "hard01",
+    "comp01", "comp02", "comp03", "comp04", "comp05",
+    "comp06", "comp07", "comp08", "comp09", "comp10",
+    "comp11", "comp12", "comp13", "comp14", "comp15",
+    "comp16", "comp17", "comp18", "comp19", "comp20"
+  ],
+  "_data_note": "Socha 2002 instances (easy*/medium*/hard*) live in data/socha/ (run scripts/fetch_socha.py). TTC 2002 competition instances (comp*) live in data/ttc2002/ (run scripts/fetch_ttc2002.py)."
 }

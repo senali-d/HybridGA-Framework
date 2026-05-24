@@ -1733,14 +1733,16 @@ def make_pheromone_asrank(rho=0.1, w=6, Q=1.0, K=20, alpha=1.0):
 # ============================================================
 # F69 — Pheromone-Based Edge Recombination (crossover)
 # ============================================================
-def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0):
+def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0, deposit=True):
     """Per-dim discrete pick: child inherits p1[d] or p2[d] proportional to
-    τ at each parent's bin."""
+    τ at each parent's bin. Set deposit=False to skip evaporate+deposit
+    (when paired with a deposit-bearing mutate that owns the scheme)."""
     def crossover_pher_edge(p1, p2, ctx):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K)
-        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        if deposit:
+            _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
         tau = pher["tau"]
         a = np.asarray(list(p1), dtype=float)
         b = np.asarray(list(p2), dtype=float)
@@ -1765,12 +1767,15 @@ def make_pheromone_edge_crossover(rho=0.1, K=20, alpha=1.0):
 # ============================================================
 # F70 — Pheromone-Weighted Crossover (continuous blend)
 # ============================================================
-def make_pheromone_weighted_crossover(rho=0.1, K=20, alpha=1.0):
-    """Per-dim blend child = w·p1 + (1−w)·p2 with w τ-proportional."""
+def make_pheromone_weighted_crossover(rho=0.1, K=20, alpha=1.0, deposit=True):
+    """Per-dim blend child = w·p1 + (1−w)·p2 with w τ-proportional.
+    Set deposit=False to skip evaporate+deposit (when paired with a
+    deposit-bearing mutate that owns the scheme)."""
     def crossover_pher_weighted(p1, p2, ctx):
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K)
-        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
+        if deposit:
+            _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0)
         tau = pher["tau"]
         a = np.asarray(list(p1), dtype=float)
         b = np.asarray(list(p2), dtype=float)
@@ -3870,3 +3875,715 @@ def crossover_bbo_perm(p1, p2, ctx):
         return _ox_insert_segment(rec, don[i:j + 1], i)
 
     return _migrate(donor, recipient), _migrate(recipient, donor)
+
+
+# ============================================================
+# Yang & Jat 2011 SSGA operators (UCTP suite)
+# ------------------------------------------------------------
+# Steady-state GA building blocks for the University Course Timetabling
+# Problem. These pair with `run_ssga` in `ga.core` and the `UCTPProblem`
+# evaluator in `benchmarks.timetabling` (which exposes `evaluate_full`
+# and `assign_rooms` for delta-style updates).
+#
+#   replace_worst        — worst-of-pop replacement (Algorithm 1, line 9)
+#   mutate_ssga_n1n2n3   — pick one random neighborhood (N1/N2/N3) and
+#                          make ONE random move (paper §IV-A mutation)
+#   make_refine_ls1      — LS1 (Algorithm 2): two-phase local search
+#                          across N1+N2 with first-improvement acceptance
+# ============================================================
+
+def replace_worst(parents, offspring, ctx):
+    """Steady-state replacement: drop the `len(offspring)` worst members
+    of the parent population and append the offspring. Used by Yang & Jat
+    2011 SSGA (Algorithm 1, line 9). Keeps population size constant.
+    """
+    pool = list(parents)
+    pool.sort(key=lambda ind: ind.fitness.values[0])
+    keep = pool[: max(0, len(parents) - len(offspring))]
+    return keep + list(offspring)
+
+
+_UCTP_N_TIMESLOTS = 45  # matches benchmarks.timetabling.N_TIMESLOTS
+
+
+def mutate_ssga_n1n2n3(ind, ctx):
+    """Yang & Jat 2011 mutation: randomly pick one of {N1, N2, N3} and
+    apply ONE move from that neighborhood.
+
+      N1: move one event to a different timeslot.
+      N2: swap the timeslots of two events.
+      N3: 3-cycle permute three events' timeslots (one of the two
+          non-identity permutations).
+
+    Operates on a discrete integer vector (timeslots in [0, 44]).
+    """
+    rng = ctx["rng"]
+    seq = [int(v) for v in ind]
+    n = len(seq)
+    if n < 2:
+        return seq
+    # ub may be a numpy array (per-gene); for UCTP every gene shares the
+    # same domain so reading position 0 is sufficient.
+    ub = ctx.get("ub")
+    if ub is None or len(ub) == 0:
+        n_slots = _UCTP_N_TIMESLOTS
+    else:
+        n_slots = int(ub[0]) + 1
+
+    pick = int(rng.integers(0, 3))
+    if pick == 0:
+        # N1: move one event to a different slot
+        e = int(rng.integers(0, n))
+        new_slot = int(rng.integers(0, n_slots))
+        while new_slot == seq[e] and n_slots > 1:
+            new_slot = int(rng.integers(0, n_slots))
+        _n1_move(seq, e, new_slot)
+    elif pick == 1 or n < 3:
+        # N2: swap two events' slots
+        i, j = rng.choice(n, size=2, replace=False).tolist()
+        _n2_swap(seq, i, j)
+    else:
+        # N3: 3-cycle permutation (one of the two cyclic permutations of
+        # three distinct events' slots, other than the identity).
+        i, j, k = rng.choice(n, size=3, replace=False).tolist()
+        _n3_cycle(seq, i, j, k, forward=rng.random() < 0.5)
+    return seq
+
+
+# ============================================================
+# F94–F106 — UCTP-native (timeslot-vector) versions of the real-coded variants
+# ------------------------------------------------------------
+# Each operator keeps the metaphor of the named real-coded feature, but the
+# update is rewritten in the language of timeslot assignments (discrete int
+# vector of length n_events, each gene in [0..N_TIMESLOTS-1]).
+#
+# Common pattern:
+#   - Adapters compose the Yang & Jat primitives _n1_move / _n2_swap / _n3_cycle
+#     so the move-set is commensurable with the SSGA baseline.
+#   - "Difference between two solutions" is the set of disagreeing genes
+#     (Hamming-positive positions).
+#   - "Step toward donor" is an N1 move setting x[i] = donor[i].
+#   - Distance metric for net_suppress / immune_memory is Hamming on integer
+#     vectors, threshold scaled to chromosome length.
+#   - LS1 refine is owned by the SSGA loop; these adapters never touch it.
+# ============================================================
+
+
+def _uctp_n_slots(ctx):
+    ub = ctx.get("ub")
+    if ub is None or len(ub) == 0:
+        return _UCTP_N_TIMESLOTS
+    return int(ub[0]) + 1
+
+
+def _as_slot_vec(ind, n):
+    return [int(v) for v in ind][:n]
+
+
+def _n1_move(seq, e, new_slot):
+    seq[e] = int(new_slot)
+    return seq
+
+
+def _n2_swap(seq, i, j):
+    seq[i], seq[j] = seq[j], seq[i]
+    return seq
+
+
+def _n3_cycle(seq, i, j, k, forward=True):
+    if forward:
+        seq[i], seq[j], seq[k] = seq[j], seq[k], seq[i]
+    else:
+        seq[i], seq[j], seq[k] = seq[k], seq[i], seq[j]
+    return seq
+
+
+def _hamming_int(a, b):
+    return sum(1 for x, y in zip(a, b) if int(x) != int(y))
+
+
+def _disagreeing_positions(a, b):
+    return [i for i in range(min(len(a), len(b))) if int(a[i]) != int(b[i])]
+
+
+def _sorted_pop_uctp(pop):
+    return sorted(pop, key=lambda x: x.fitness.values[0])
+
+
+def _random_int_vec(n, n_slots, rng):
+    return rng.integers(0, n_slots, size=n).astype(int).tolist()
+
+
+def _ind_fitness(ind, default=float("inf")):
+    try:
+        return float(ind.fitness.values[0])
+    except (AttributeError, IndexError):
+        return default
+
+
+# ------------------------------------------------------------
+# F94 — UCTP DE/rand/1
+# ------------------------------------------------------------
+def make_de_uctp(F=0.5):
+    def mutate_de_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        pool = [p for p in pop if id(p) != id(ind)]
+        if len(pool) < 3:
+            return mutate_ssga_n1n2n3(ind, ctx)
+        idx = rng.choice(len(pool), size=3, replace=False)
+        r1 = _as_slot_vec(pool[int(idx[0])], n)
+        r2 = _as_slot_vec(pool[int(idx[1])], n)
+        r3 = _as_slot_vec(pool[int(idx[2])], n)
+        diff_pos = _disagreeing_positions(r2, r3)
+        if not diff_pos:
+            return mutate_ssga_n1n2n3(ind, ctx)
+        out = list(r1)
+        for i in diff_pos:
+            if rng.random() < F:
+                out[i] = int(r2[i])
+        return out
+    mutate_de_uctp.__name__ = f"de_uctp_F{F:g}"
+    return mutate_de_uctp
+
+
+# ------------------------------------------------------------
+# F95 — UCTP SHADE (current-to-pbest/1 with adaptive F/CR)
+# ------------------------------------------------------------
+def make_shade_uctp():
+    def mutate_shade_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        if len(pop) < 4:
+            return mutate_ssga_n1n2n3(ind, ctx)
+        mem = ctx["shade_memory"]
+        muF = float(np.mean(mem["F"]))
+        muCR = float(np.mean(mem["CR"]))
+        F = float(np.clip(rng.standard_cauchy() * 0.1 + muF, 0.05, 1.0))
+        CR = float(np.clip(rng.normal(muCR, 0.1), 0.0, 1.0))
+        sorted_pop = _sorted_pop_uctp(pop)
+        p_size = max(2, int(0.2 * len(sorted_pop)))
+        pbest = _as_slot_vec(sorted_pop[int(rng.integers(0, p_size))], n)
+        idx = rng.choice(len(pop), size=2, replace=False)
+        r1 = _as_slot_vec(pop[int(idx[0])], n)
+        r2 = _as_slot_vec(pop[int(idx[1])], n)
+        cur = _as_slot_vec(ind, n)
+        target = _disagreeing_positions(pbest, cur)
+        diff = _disagreeing_positions(r1, r2)
+        rng.shuffle(target); rng.shuffle(diff)
+        out = list(cur)
+        if target:
+            k1 = max(1, int(round(F * len(target))))
+            for i in target[:k1]:
+                if rng.random() < CR:
+                    out[i] = int(pbest[i])
+        if diff:
+            k2 = max(1, int(round(F * len(diff))))
+            for i in diff[:k2]:
+                if rng.random() < CR:
+                    out[i] = int(r1[i])
+        mem["F"].append(F); mem["CR"].append(CR)
+        return out
+    return mutate_shade_uctp
+
+
+# ------------------------------------------------------------
+# F96 — UCTP diversity restart
+# ------------------------------------------------------------
+def make_diversity_restart_uctp(stagnation_threshold=15, restart_fraction=0.2):
+    def diversity_restart_uctp(population, ctx):
+        if ctx["stagnation_counter"] < stagnation_threshold:
+            return population
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        n_restart = int(len(population) * restart_fraction)
+        if n_restart <= 0:
+            return population
+        sorted_pop = _sorted_pop_uctp(population)
+        keep = sorted_pop[: len(population) - n_restart]
+        fresh = [creator.Individual(_random_int_vec(n, n_slots, rng))
+                 for _ in range(n_restart)]
+        ctx["stagnation_counter"] = 0
+        return keep + fresh
+    return diversity_restart_uctp
+
+
+# ------------------------------------------------------------
+# F97 — UCTP MMAS τ_min/τ_max pheromone
+# ------------------------------------------------------------
+def make_pheromone_minmax_uctp(rho=0.1, tau_min=0.1, tau_max=5.0):
+    # Deposit is a *constant* scaled to the τ dynamic range — UCTP fitness
+    # is HCV-dominated (≥10^6 when infeasible), so the REAL pher_minmax's
+    # `1/(1+f)` deposit would collapse to ~10^-7 and the pheromone would
+    # never accumulate. With deposit = (τ_max-τ_min)·rho the best slots
+    # converge to ~τ_max while uninformative slots decay to τ_min,
+    # producing meaningful slot-sampling bias regardless of fitness scale.
+    deposit = max((tau_max - tau_min) * rho, 1e-6)
+    def mutate_pher_minmax_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        tau = ctx.get("pher_uctp_tau")
+        if tau is None or tau.shape != (n, n_slots):
+            tau = np.full((n, n_slots), tau_max, dtype=float)
+            ctx["pher_uctp_tau"] = tau
+            ctx["pher_uctp_last_gen"] = -1
+        gen = int(ctx.get("gen", 0))
+        if ctx.get("pher_uctp_last_gen", -1) != gen:
+            tau *= (1.0 - rho)
+            bs = ctx.get("best_so_far")
+            if bs is not None:
+                bs_vec = _as_slot_vec(bs, n)
+                for e in range(n):
+                    tau[e, bs_vec[e]] += deposit
+            np.clip(tau, tau_min, tau_max, out=tau)
+            ctx["pher_uctp_last_gen"] = gen
+        out = _as_slot_vec(ind, n)
+        e = int(rng.integers(0, n))
+        row = tau[e]
+        s = float(row.sum())
+        if s <= 0:
+            new_slot = int(rng.integers(0, n_slots))
+        else:
+            new_slot = int(rng.choice(n_slots, p=row / s))
+        out[e] = new_slot
+        return out
+    return mutate_pher_minmax_uctp
+
+
+# ------------------------------------------------------------
+# F98 — UCTP immune memory pool (Hamming novelty)
+# ------------------------------------------------------------
+def make_immune_memory_pool_uctp(k_inject=2, dist_thresh_frac=0.05):
+    def diversity_immune_uctp(population, ctx):
+        n = int(ctx["dim"])
+        memory = ctx.setdefault("immune_memory_uctp_pool", [])
+        thr = float(dist_thresh_frac) * n
+        cur_best = _best_in_pop(population)
+        cur_vec = _as_slot_vec(cur_best, n)
+        if not memory:
+            mc = creator.Individual(list(cur_best))
+            mc.fitness.values = cur_best.fitness.values
+            memory.append(mc)
+        else:
+            min_d = min(_hamming_int(cur_vec, _as_slot_vec(m, n)) for m in memory)
+            if min_d > thr and len(memory) < 20:
+                mc = creator.Individual(list(cur_best))
+                mc.fitness.values = cur_best.fitness.values
+                memory.append(mc)
+        sorted_pop = _sorted_pop_uctp(population)
+        n_inject = min(k_inject, len(memory), len(population) // 2)
+        if n_inject <= 0:
+            return population
+        keep = sorted_pop[: len(population) - n_inject]
+        injected = []
+        for m in memory[-n_inject:]:
+            clone = creator.Individual(list(m))
+            clone.fitness.values = m.fitness.values
+            injected.append(clone)
+        return keep + injected
+    return diversity_immune_uctp
+
+
+# ------------------------------------------------------------
+# F99 — UCTP network suppression (Hamming similarity)
+# ------------------------------------------------------------
+def make_network_suppression_uctp(threshold_frac=0.02):
+    def diversity_suppress_uctp(population, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        thr = max(1.0, float(threshold_frac) * n)
+        pop = list(population)
+        vecs = [_as_slot_vec(p, n) for p in pop]
+        keep_mask = [True] * len(pop)
+        for i in range(len(pop)):
+            if not keep_mask[i]:
+                continue
+            for j in range(i + 1, len(pop)):
+                if not keep_mask[j]:
+                    continue
+                if _hamming_int(vecs[i], vecs[j]) < thr:
+                    worse = i if pop[i].fitness.values[0] > pop[j].fitness.values[0] else j
+                    keep_mask[worse] = False
+        out = [pop[i] for i in range(len(pop)) if keep_mask[i]]
+        for _ in range(len(pop) - len(out)):
+            out.append(creator.Individual(_random_int_vec(n, n_slots, rng)))
+        return out
+    return diversity_suppress_uctp
+
+
+# ------------------------------------------------------------
+# F100 — UCTP cuckoo discovery
+# ------------------------------------------------------------
+def make_cuckoo_discovery_uctp(pa=0.25):
+    def diversity_cuckoo_uctp(population, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        for i in range(len(population)):
+            if rng.random() < pa:
+                new_ind = creator.Individual(_random_int_vec(n, n_slots, rng))
+                new_ind.age = 0
+                population[i] = new_ind
+        return population
+    return diversity_cuckoo_uctp
+
+
+# ------------------------------------------------------------
+# F101 — UCTP ABC scout
+# ------------------------------------------------------------
+def make_abc_scout_uctp(limit=None):
+    def replace_abc_uctp(parents, offspring, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        pop_size = ctx["pop_size"]
+        # Default limit scaled to n (events), not n*pop_size — SSGA produces
+        # one child per gen so pop_size*n would essentially never trigger.
+        lim = limit if limit is not None else max(1, n)
+        survivors = generational_elitism(parents, offspring, int(ctx["elitism_k"]))
+
+        parents_by_f = sorted(parents, key=lambda x: x.fitness.values[0])
+        offspring_by_f = sorted(offspring, key=lambda x: x.fitness.values[0])
+        m = min(len(parents_by_f), len(offspring_by_f))
+        improved_ids, unimproved_ids = set(), set()
+        for i in range(m):
+            p = parents_by_f[i]; o = offspring_by_f[i]
+            if o.fitness.values[0] < p.fitness.values[0]:
+                improved_ids.add(id(p))
+            else:
+                unimproved_ids.add(id(p))
+        for ind in survivors:
+            t = getattr(ind, "trial", 0)
+            if id(ind) in improved_ids:
+                ind.trial = 0
+            elif id(ind) in unimproved_ids:
+                ind.trial = t + 1
+            else:
+                ind.trial = 0
+
+        for i, ind in enumerate(survivors):
+            if getattr(ind, "trial", 0) > lim:
+                scout = creator.Individual(_random_int_vec(n, n_slots, rng))
+                scout.age = 0
+                scout.trial = 0
+                survivors[i] = scout
+        return survivors
+    return replace_abc_uctp
+
+
+# ------------------------------------------------------------
+# F102 — UCTP BFO chemotaxis (tumble + event-local swim)
+# ------------------------------------------------------------
+def make_bfo_chemotaxis_uctp(N_s=4):
+    def mutate_bfo_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        out = _as_slot_vec(ind, n)
+        if n < 2:
+            return out
+        e = int(rng.integers(0, n))
+        _n1_move(out, e, int(rng.integers(0, n_slots)))
+        # Event-local swim: a few more N1 moves on nearby event indices.
+        step = max(2, n // 8)
+        for _ in range(N_s):
+            e2 = (e + int(rng.integers(1, step))) % n
+            _n1_move(out, e2, int(rng.integers(0, n_slots)))
+        return out
+    return mutate_bfo_uctp
+
+
+# ------------------------------------------------------------
+# F103 — UCTP Krill herd (food + herd + drift)
+# ------------------------------------------------------------
+def make_krill_herd_uctp(Vf=0.6, Nmax=0.35, Dmax=0.2):
+    def mutate_krill_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        pop = ctx.get("_population", []) or []
+        bs = ctx.get("best_so_far")
+        cur = _as_slot_vec(ind, n)
+
+        def _adopt_from(donor_vec):
+            diff = _disagreeing_positions(cur, donor_vec)
+            if not diff:
+                return
+            i = int(rng.choice(diff))
+            cur[i] = int(donor_vec[i])
+
+        if bs is not None and rng.random() < Vf:
+            _adopt_from(_as_slot_vec(bs, n))
+        if pop and rng.random() < Nmax:
+            others = [p for p in pop if id(p) != id(ind)]
+            if others:
+                my_f = _ind_fitness(ind)
+                if math.isfinite(my_f):
+                    neigh = min(others, key=lambda p: abs(_ind_fitness(p) - my_f))
+                else:
+                    neigh = others[int(rng.integers(0, len(others)))]
+                _adopt_from(_as_slot_vec(neigh, n))
+        if rng.random() < Dmax:
+            e = int(rng.integers(0, n))
+            cur[e] = int(rng.integers(0, n_slots))
+        return cur
+    return mutate_krill_uctp
+
+
+# ------------------------------------------------------------
+# F104 — UCTP SOS (mutualism / commensalism / parasitism)
+# ------------------------------------------------------------
+def make_sos_uctp():
+    def mutate_sos_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        pop = ctx.get("_population", []) or []
+        cur = _as_slot_vec(ind, n)
+        if n < 3:
+            return cur
+
+        def _parasitism():
+            i, j, k = rng.choice(n, size=3, replace=False).tolist()
+            _n3_cycle(cur, i, j, k, forward=rng.random() < 0.5)
+            return cur
+
+        if len(pop) < 2:
+            return _parasitism()
+
+        phase = int(rng.integers(0, 3))
+        if phase == 0:
+            partner = _as_slot_vec(pop[int(rng.integers(0, len(pop)))], n)
+            a, b = sorted(rng.integers(0, n, size=2).tolist())
+            for i in range(a, b + 1):
+                cur[i] = int(partner[i])
+            return cur
+        if phase == 1:
+            partner = _as_slot_vec(pop[int(rng.integers(0, len(pop)))], n)
+            diff = _disagreeing_positions(cur, partner)
+            if not diff:
+                return cur
+            i = int(rng.choice(diff))
+            cur[i] = int(partner[i])
+            return cur
+        return _parasitism()
+    return mutate_sos_uctp
+
+
+# ------------------------------------------------------------
+# F105 — UCTP BBO migration crossover
+# ------------------------------------------------------------
+def crossover_bbo_uctp(p1, p2, ctx):
+    rng = ctx["rng"]
+    n = int(ctx["dim"])
+    a = _as_slot_vec(p1, n)
+    b = _as_slot_vec(p2, n)
+    f1 = _ind_fitness(p1, 0.0)
+    f2 = _ind_fitness(p2, 0.0)
+    donor, recipient = (a, b) if f1 <= f2 else (b, a)
+
+    def _migrate(don, rec):
+        i, j = sorted(rng.integers(0, n, size=2).tolist())
+        child = list(rec)
+        for k in range(i, j + 1):
+            child[k] = int(don[k])
+        return child
+
+    return _migrate(donor, recipient), _migrate(recipient, donor)
+
+
+# ------------------------------------------------------------
+# F106 — UCTP GSA (mass-weighted slot voting)
+# ------------------------------------------------------------
+def make_gsa_full_uctp(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
+    def mutate_gsa_uctp(ind, ctx):
+        rng = ctx["rng"]
+        n = int(ctx["dim"])
+        n_slots = _uctp_n_slots(ctx)
+        pop = ctx.get("_population", []) or []
+        if len(pop) < 4:
+            return mutate_ssga_n1n2n3(ind, ctx)
+        t = float(ctx.get("t_ratio", 0.0))
+        k = max(2, int(len(pop) * (1.0 - t * (1.0 - kbest_final_frac))))
+        sorted_pop = _sorted_pop_uctp(pop)[:k]
+        fits = np.array([p.fitness.values[0] for p in sorted_pop], dtype=float)
+        span = max(float(fits.max() - fits.min()), 1e-12)
+        masses = (fits.max() - fits) / span
+        if masses.sum() <= 0:
+            return mutate_ssga_n1n2n3(ind, ctx)
+        vote = np.zeros((n, n_slots), dtype=float)
+        for m_i, p in zip(masses, sorted_pop):
+            vec = _as_slot_vec(p, n)
+            for e in range(n):
+                vote[e, vec[e]] += float(m_i)
+        G_t = G0 * float(np.exp(-alpha * t / max(1.0, ctx.get("max_gen_estimate", 1))))
+        n_moves = max(1, min(int(G_t), max(1, n // 4)))
+        out = _as_slot_vec(ind, n)
+        for _ in range(n_moves):
+            e = int(rng.integers(0, n))
+            row = vote[e] + 1e-9
+            probs = row / row.sum()
+            out[e] = int(rng.choice(n_slots, p=probs))
+        return out
+    return mutate_gsa_uctp
+
+
+def _events_in_hcv(problem, x, rooms):
+    """Return event indices contributing to current HCV: unplaced events
+    (room == -1) plus events whose slot has any student-conflict involving
+    one of their students."""
+    n = problem.n_events
+    n_slots = _UCTP_N_TIMESLOTS
+    bad = [e for e in range(n) if int(rooms[e]) == -1]
+    ts = np.asarray(x, dtype=np.int64)
+    onehot = np.zeros((n, n_slots), dtype=np.int8)
+    onehot[np.arange(n), ts] = 1
+    attend_slot = problem._student_event_i @ onehot  # (n_students, n_slots)
+    conflict_mask = attend_slot > 1
+    if not bool(conflict_mask.any()):
+        return bad
+    se = problem.student_event
+    in_bad = set(bad)
+    for e in range(n):
+        if e in in_bad:
+            continue
+        t = int(ts[e])
+        if bool(np.any(se[:, e] & conflict_mask[:, t])):
+            bad.append(e)
+    return bad
+
+
+def _ls1_apply(problem, x, rooms, hcv, scv, s_max, rng,
+               max_trials=None, per_event_n1=8, per_event_n2=8):
+    """In-place LS1 (Yang & Jat 2011 Algorithm 2) on a single individual.
+
+    Two phases:
+      1. Reduce HCV: only the subset of events currently contributing to
+         HCV are visited. For each, try `per_event_n1` random N1 moves
+         (move to another slot) then `per_event_n2` N2 swaps, accepting
+         the first move that strictly reduces total HCV.
+      2. If feasible (hcv==0), reduce SCV across all events with the same
+         per-event trial caps, accepting moves that reduce SCV without
+         reintroducing HCV.
+
+    `s_max` caps accepted moves per phase. `max_trials` caps the total
+    number of trial-move scorings across both phases (defensive bound for
+    huge instances; defaults to 50 * s_max).
+
+    N3 (3-cycle) is not enumerated here — small benefit, big cost. The
+    mutation operator (`mutate_ssga_n1n2n3`) still samples N3 so the
+    family stays reachable through the outer GA loop.
+    """
+    n = problem.n_events
+    n_slots = _UCTP_N_TIMESLOTS
+    if max_trials is None:
+        max_trials = 50 * s_max
+
+    state = {"rooms": rooms, "hcv": hcv, "scv": scv, "trials": 0}
+
+    def _try_n1(e, target_predicate):
+        if state["trials"] >= max_trials:
+            return False
+        old_slot = int(x[e])
+        k = min(per_event_n1, n_slots)
+        choices = rng.choice(n_slots, size=k, replace=False).tolist()
+        for new_slot in choices:
+            ns = int(new_slot)
+            if ns == old_slot:
+                continue
+            state["trials"] += 1
+            x[e] = ns
+            new_rooms = problem.assign_rooms(
+                x, slots=[old_slot, ns], rooms=state["rooms"],
+            )
+            _f, nh, nss = problem.score(x, new_rooms)
+            if target_predicate(nh, nss):
+                state["rooms"], state["hcv"], state["scv"] = new_rooms, nh, nss
+                return True
+            x[e] = old_slot
+            if state["trials"] >= max_trials:
+                return False
+        return False
+
+    def _try_n2(e, target_predicate):
+        if state["trials"] >= max_trials or n < 2:
+            return False
+        k = min(per_event_n2, n)
+        partners = rng.choice(n, size=k, replace=False).tolist()
+        for f in partners:
+            f = int(f)
+            if f == e:
+                continue
+            slot_e, slot_f = int(x[e]), int(x[f])
+            if slot_e == slot_f:
+                continue
+            state["trials"] += 1
+            x[e], x[f] = slot_f, slot_e
+            new_rooms = problem.assign_rooms(
+                x, slots=[slot_e, slot_f], rooms=state["rooms"],
+            )
+            _f, nh, nss = problem.score(x, new_rooms)
+            if target_predicate(nh, nss):
+                state["rooms"], state["hcv"], state["scv"] = new_rooms, nh, nss
+                return True
+            x[e], x[f] = slot_e, slot_f
+            if state["trials"] >= max_trials:
+                return False
+        return False
+
+    # ---- Phase 1: HCV repair ----
+    steps = 0
+    hcv_events = _events_in_hcv(problem, x, state["rooms"])
+    rng.shuffle(hcv_events)
+    for e in hcv_events:
+        if state["hcv"] == 0 or steps >= s_max or state["trials"] >= max_trials:
+            break
+        cur = state["hcv"]
+        pred = lambda nh, ns, _h=cur: nh < _h
+        if _try_n1(e, pred) or _try_n2(e, pred):
+            steps += 1
+
+    # ---- Phase 2: SCV reduction (only if feasible) ----
+    if state["hcv"] == 0 and state["trials"] < max_trials:
+        steps = 0
+        order = list(range(n))
+        rng.shuffle(order)
+        for e in order:
+            if steps >= s_max or state["trials"] >= max_trials:
+                break
+            cur = state["scv"]
+            pred = lambda nh, ns, _s=cur: (nh == 0 and ns < _s)
+            if _try_n1(e, pred) or _try_n2(e, pred):
+                steps += 1
+
+    fitness = float(problem._hcv_weight * state["hcv"] + state["scv"])
+    return x, state["rooms"], state["hcv"], state["scv"], fitness
+
+
+def make_refine_ls1(s_max=20):
+    """Return a population-level refine_fn that applies LS1 to every
+    individual. Used by the generational SGA backbone for variants that
+    want LS1 as an end-of-generation refinement; `run_ssga` invokes
+    `_ls1_apply` directly for the SSGA-style per-child schedule.
+    """
+    def refine_ls1(population, ctx):
+        problem = ctx["problem"]
+        rng = ctx["rng"]
+        out = []
+        for ind in population:
+            x = [int(v) for v in ind]
+            _f, hcv, scv, rooms = problem.evaluate_full(x)
+            x, rooms, hcv, scv, fitness = _ls1_apply(
+                problem, x, rooms, hcv, scv, s_max, rng,
+            )
+            new_ind = creator.Individual(x)
+            new_ind.fitness.values = (float(fitness),)
+            new_ind.age = getattr(ind, "age", 0)
+            out.append(new_ind)
+        return out
+    refine_ls1.__name__ = f"refine_ls1_smax{s_max}"
+    return refine_ls1

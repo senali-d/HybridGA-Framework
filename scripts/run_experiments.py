@@ -70,7 +70,7 @@ def resolve_max_fes(suite_cfg, dim):
 from ga import features as feat
 from benchmarks.suites import (
     run_protocol, run_separable_protocol, run_engineering_protocol,
-    run_tsp_protocol,
+    run_tsp_protocol, run_timetabling_protocol,
 )
 from analysis.stats import summarize, write_summary
 from analysis import plots as plot_mod
@@ -241,6 +241,7 @@ def main():
         "separable": run_separable_protocol,
         "engineering": run_engineering_protocol,
         "tsp": run_tsp_protocol,
+        "timetabling": run_timetabling_protocol,
     }
     if args.suite not in protocols:
         raise NotImplementedError(
