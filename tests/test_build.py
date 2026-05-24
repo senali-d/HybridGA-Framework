@@ -163,7 +163,7 @@ def test_runner_persists_audit_files(tmp_path):
     out = subprocess.run(
         [sys.executable, "scripts/run_experiments.py",
          "--suite", "cec2022",
-         "--variants", "Levy_mut",
+         "--variants", "DE_mut",
          "--n-runs", "1",
          "--out-root", str(tmp_path),
          "--tag", "audit_smoke",
@@ -178,4 +178,4 @@ def test_runner_persists_audit_files(tmp_path):
     assert cfg["suite"] == "cec2022"
     diffs = json.loads((exp_dir / "variants_diff.json").read_text())
     names = [d["name"] for d in diffs]
-    assert "SGA_baseline" in names and "SGA+Levy_mut" in names
+    assert "SGA_baseline" in names and "SGA+DE_mut" in names

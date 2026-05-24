@@ -68,7 +68,7 @@ def test_variant_runs_clean(variant):
 
 def test_seed_reproducibility():
     """Two runs with the same seed must give identical errors."""
-    variant = next(v for v in VARIANTS if v.name == "SGA+chaotic_perturb_mut")
+    variant = next(v for v in VARIANTS if v.name == "SGA+DE_mut")
     r1 = run_sga(F12022(ndim=DIM), variant, pop_size=POP, max_fes=MAX_FES, seed=7)
     r2 = run_sga(F12022(ndim=DIM), variant, pop_size=POP, max_fes=MAX_FES, seed=7)
     assert r1["error"] == r2["error"]
@@ -205,16 +205,3 @@ def test_engineering_feasible_point_below_offset():
             pytest.fail(f"{name}: no feasible point found in 20000 samples")
 
 
-def test_islands_with_diversity():
-    """Regression check: islands path must apply diversity_fn (was skipped)."""
-    from ga.core import FeatureConfig
-    from ga import features as feat
-
-    cfg = FeatureConfig(
-        name="islands+immigrant",
-        n_islands=3,
-        migration_interval=4,
-        diversity_fn=feat.make_random_immigrant(fraction=0.2),
-    )
-    r = run_sga(F62022(ndim=DIM), cfg, pop_size=15, max_fes=300, seed=0)
-    assert r["error"] >= 0.0

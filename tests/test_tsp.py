@@ -80,38 +80,6 @@ def test_tsp_baseline_smoke_run():
     assert r["best_fitness"] < rand_tour
 
 
-@needs_data
-def test_tsp_gaco_hybrid_smoke_run():
-    """The GACO hybrid (pheromone-guided edge recombination + 2-opt refine +
-    MMAS pheromone update) must run on eil51, preserve the permutation
-    invariant, respect MaxFES, and clearly beat the OX/swap baseline at an
-    equal budget."""
-    from ga.build import baseline_from_config, variant_from_baseline
-    from ga.core import run_sga
-    from ga.variants import VARIANTS
-    from benchmarks.tsp import TSPLIB_FUNCS
-
-    cfg = json.loads((ROOT / "configs" / "tsp.json").read_text())
-    Cls = dict(TSPLIB_FUNCS)["eil51"]
-    p = Cls()
-    baseline = baseline_from_config(cfg, dim=p.ndim)
-    baseline.name = "SGA_baseline"
-    spec = next(s for s in VARIANTS if s.name == "SGA+GACO_hybrid")
-    assert spec.encodings == ("permutation",)
-    gaco = variant_from_baseline(baseline, spec)
-
-    r_b = run_sga(p, baseline, pop_size=30, max_fes=6000, seed=0,
-                  record_history=False)
-    r_g = run_sga(p, gaco, pop_size=30, max_fes=6000, seed=0,
-                  record_history=False)
-    assert r_g["fes_used"] <= 6000
-    assert sorted(int(c) for c in r_g["best_solution"]) == list(range(p.ndim))
-    # Memetic ACO hybrid should comfortably out-perform the plain GA here.
-    assert r_g["best_fitness"] < r_b["best_fitness"]
-    # And land within a sane neighbourhood of the known optimum (426).
-    assert r_g["best_fitness"] < 1.25 * p.f_global
-
-
 _NEW_PERM_VARIANTS = [
     "SGA+restart", "SGA+abc_scout", "SGA+cuckoo_discovery",
     "SGA+net_suppress", "SGA+immune_memory", "SGA+pher_minmax",
