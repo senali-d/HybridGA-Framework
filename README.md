@@ -148,6 +148,43 @@ python scripts/run_experiments.py --suite uctp --full --exact \
 
 Per-suite quick variations are documented below.
 
+### Full sweep: one function per batch (isolated archives)
+
+Sometimes you want a **separate archive per function/instance** — for
+incremental commits, per-function plots, or to resume part-way through.
+The loops below reuse `$ALL16` from the previous subsection.
+
+```bash
+# CEC 2022 — one tag per function (F1..F12)
+for fn in F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12; do
+  python scripts/run_experiments.py --suite cec2022 --full --exact \
+      --dim 10 --workers 12 \
+      --functions "$fn" --tag "cec2022_D10_${fn}" \
+      --variants "$ALL16"
+done
+
+# CEC 2020 Real-World — one tag per engineering problem
+for fn in TensionCompressionSpring PressureVessel WeldedBeam \
+          ThreeBarTruss SpeedReducer; do
+  python scripts/run_experiments.py --suite cec2020_realworld --full --exact \
+      --workers 8 \
+      --functions "$fn" --tag "cec2020rw_${fn}" \
+      --variants "$ALL16"
+done
+
+# TSP — one tag per TSPLIB instance
+for fn in eil51 berlin52 st70 kroA100 ch150 kroA200; do
+  python scripts/run_experiments.py --suite tsp --full --exact \
+      --workers 12 --max-fes 500000 \
+      --functions "$fn" --tag "tsp_${fn}_all16" \
+      --variants "$ALL16"
+done
+```
+
+Each iteration writes only to `results/<tag>/`; previous folders are
+untouched. If a tag already exists it is wiped before the new run, so
+delete or rename a tag only when you want to replace its contents.
+
 ### CEC 2022 (real-coded, default)
 
 ```bash
