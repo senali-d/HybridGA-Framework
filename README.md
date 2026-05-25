@@ -115,6 +115,39 @@ The CLI follows the same pattern for every suite:
 python scripts/run_experiments.py --suite <suite> [flags]
 ```
 
+### Full sweep: all 16 variants + baseline, every suite
+
+The same 16 variant names are valid on every suite — the runner picks the
+encoding-appropriate implementation from `configs/<suite>.json` (`encoding`
+field). `SGA_baseline` is always included automatically; do not list it in
+`--variants`. Each command writes to its own `results/<tag>/` folder and
+does not touch any other run.
+
+```bash
+# Define the variant list once, reuse across suites
+ALL16="DE_mut,SHADE_mut,greedy_replace,archive_replace,metropolis_replace,\
+restart,pher_minmax,immune_memory,net_suppress,cuckoo_discovery,abc_scout,\
+bfo_chemotaxis,krill_herd_mut,sos_mut,bbo_migration_cx,gsa_full_mut"
+
+# CEC 2022 — real-coded, 12 functions × 30 runs (D=10, MaxFES=200k from protocol)
+python scripts/run_experiments.py --suite cec2022 --full --exact \
+    --dim 10 --workers 12 --tag cec2022_D10_all16 --variants "$ALL16"
+
+# CEC 2020 Real-World — 5 engineering problems × 30 runs (fixed dim per problem)
+python scripts/run_experiments.py --suite cec2020_realworld --full --exact \
+    --workers 8 --tag cec2020rw_all16 --variants "$ALL16"
+
+# TSP — 6 TSPLIB instances × 30 runs × 500k FEs each
+python scripts/run_experiments.py --suite tsp --full --exact \
+    --workers 12 --max-fes 500000 --tag tsp_all16 --variants "$ALL16"
+
+# UCTP — 30 timetabling instances × 30 runs × 500k FEs (multi-day on one box)
+python scripts/run_experiments.py --suite uctp --full --exact \
+    --workers 8 --tag uctp_all16 --variants "$ALL16"
+```
+
+Per-suite quick variations are documented below.
+
 ### CEC 2022 (real-coded, default)
 
 ```bash
