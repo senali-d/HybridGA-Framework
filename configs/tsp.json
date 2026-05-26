@@ -14,6 +14,6 @@
   "elitism": {"k": 1},
   "stopping": "fe_budget",
   "_stopping_note": "Halt at 5,000 generations × pop_size = 500,000 cumulative function evaluations. The runner currently supports FE-budget stopping only; max_generations is recorded for documentation.",
-  "instances": ["st70", "eil51", "berlin52", "kroA100", "ch150", "kroA200"],
+  "instances": ["st70", "eil51", "berlin52", "kroA100", "eil101", "ch130", "ch150", "kroA200", "a280", "lin318", "pcb442"],
   "_note": "Run scripts/fetch_tsplib.py once to populate data/tsplib/ before --suite tsp."
 }

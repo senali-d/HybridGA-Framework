@@ -14,8 +14,17 @@ USAGE:
 
 import argparse
 import json
+import multiprocessing as mp
 import sys
 from pathlib import Path
+
+# Use forkserver on macOS/Linux: fresh-process safety of `spawn` without
+# re-importing every dependency per worker, and lets workers share the
+# read-only distance/cost matrices loaded once in the helper.
+try:
+    mp.set_start_method("forkserver", force=True)
+except (RuntimeError, ValueError):
+    pass
 
 # Make src/ importable when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
