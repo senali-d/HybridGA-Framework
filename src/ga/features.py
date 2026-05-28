@@ -583,16 +583,27 @@ def make_krill_herd(Nmax=0.01, Vf=0.02, Dmax=0.005, n_neighbors=5,
         # personal best.
         inv_w = 1.0 / (fits - best_f + 1.0)
         positions = np.array([_arr(p) for p in pop])
-        food = (positions * inv_w[:, None]).sum(axis=0) / inv_w.sum()
-        food_fit = float(np.mean(fits))  # cheap proxy
-        beta_food = ((cur_f - food_fit) / f_span) * (food - x) / (
+        inv_w_sum = float(inv_w.sum())
+        if np.isfinite(inv_w_sum) and inv_w_sum > 0:
+            food = (positions * inv_w[:, None]).sum(axis=0) / inv_w_sum
+        else:
+            food = x.copy()
+        finite_fits = fits[np.isfinite(fits)]
+        food_fit = float(np.mean(finite_fits)) if finite_fits.size else cur_f
+        coef_food = (cur_f - food_fit) / f_span
+        if not np.isfinite(coef_food):
+            coef_food = 0.0
+        beta_food = coef_food * (food - x) / (
             np.linalg.norm(food - x) + 1e-12)
 
         pbest_x = np.asarray(getattr(ind, "kh_pbest_x", x), dtype=float)
         pbest_f = float(getattr(ind, "kh_pbest_f", cur_f))
         if pbest_x.shape != x.shape:
             pbest_x = x.copy(); pbest_f = cur_f
-        beta_best = ((cur_f - pbest_f) / f_span) * (pbest_x - x) / (
+        coef_best = (cur_f - pbest_f) / f_span
+        if not np.isfinite(coef_best):
+            coef_best = 0.0
+        beta_best = coef_best * (pbest_x - x) / (
             np.linalg.norm(pbest_x - x) + 1e-12)
 
         F_prev = getattr(ind, "kh_F", np.zeros(dim))
@@ -753,10 +764,18 @@ def make_gsa_full(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
             [p.fitness.values[0] if p.fitness.valid else np.inf for p in pop],
             dtype=float,
         )
-        worst, best_f = fits.max(), fits.min()
+        finite_mask = np.isfinite(fits)
+        if not finite_mask.any():
+            return list(ind)
+        finite_fits = fits[finite_mask]
+        worst, best_f = float(finite_fits.max()), float(finite_fits.min())
         denom = (worst - best_f) if worst > best_f + 1e-30 else 1.0
-        masses = (worst - fits) / denom + 1e-9
-        masses /= masses.sum()
+        raw = np.where(finite_mask, worst - fits, 0.0)
+        masses = raw / denom + 1e-9
+        m_sum = float(masses.sum())
+        if not np.isfinite(m_sum) or m_sum <= 0:
+            return list(ind)
+        masses /= m_sum
 
         t = float(ctx.get("t_ratio", 0.0))
         G = G0 * math.exp(-alpha * t)
@@ -1598,10 +1617,19 @@ def make_gsa_full_perm(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
         # Kbest shrinks from |pop| to kbest_final_frac * |pop| over the run
         k = max(2, int(len(pop) * (1.0 - t * (1.0 - kbest_final_frac))))
         sorted_pop = _sorted_pop(pop)[:k]
-        fits = np.array([p.fitness.values[0] for p in sorted_pop], dtype=float)
-        span = max(float(fits.max() - fits.min()), 1e-12)
-        masses = (fits.max() - fits) / span  # heaviest = best
-        if masses.sum() <= 0:
+        fits = np.array(
+            [p.fitness.values[0] if p.fitness.valid else np.inf for p in sorted_pop],
+            dtype=float,
+        )
+        finite_mask = np.isfinite(fits)
+        if not finite_mask.any():
+            return _as_perm(ind, n)
+        finite_max = float(fits[finite_mask].max())
+        finite_min = float(fits[finite_mask].min())
+        span = max(finite_max - finite_min, 1e-12)
+        masses = np.where(finite_mask, (finite_max - fits) / span, 0.0)
+        m_sum = float(masses.sum())
+        if not np.isfinite(m_sum) or m_sum <= 0:
             return _as_perm(ind, n)
 
         edge_vote = np.zeros((n, n), dtype=float)
