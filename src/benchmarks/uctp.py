@@ -10,7 +10,7 @@ Two instance sets are exposed:
 
 Both use the same `.tim` file format (same parser) and the same evaluation
 machinery. The combined registry `UCTP_FUNCS` merges them in
-configs/timetabling.json's `instances` order.
+configs/uctp.json's `instances` order.
 
 Each instance assigns `n` events to 45 timeslots (9 per day x 5 days) and
 `m` rooms, subject to four hard constraints and three soft constraints

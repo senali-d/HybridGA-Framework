@@ -29,8 +29,13 @@ _TSPLIB_OPTIMA = {
     "eil51":    426,
     "berlin52": 7542,
     "kroA100":  21282,
+    "eil101":   629,
+    "ch130":    6110,
     "ch150":    6528,
     "kroA200":  29368,
+    "a280":     2579,
+    "lin318":   42029,
+    "pcb442":   50778,
 }
 
 
@@ -167,6 +172,11 @@ TSPLIB_FUNCS = [
     ("eil51",    _make_instance("eil51")),
     ("berlin52", _make_instance("berlin52")),
     ("kroA100",  _make_instance("kroA100")),
+    ("eil101",   _make_instance("eil101")),
+    ("ch130",    _make_instance("ch130")),
     ("ch150",    _make_instance("ch150")),
     ("kroA200",  _make_instance("kroA200")),
+    ("a280",     _make_instance("a280")),
+    ("lin318",   _make_instance("lin318")),
+    ("pcb442",   _make_instance("pcb442")),
 ]

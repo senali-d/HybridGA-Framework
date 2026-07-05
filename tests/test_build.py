@@ -21,7 +21,7 @@ def _load(suite):
 
 
 def test_engineering_baseline_matches_config():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     assert b.cx_prob == 0.9
     assert b.elitism_k == 1
@@ -40,7 +40,7 @@ def test_cec2022_baseline_uses_k3_tournament():
 
 
 def test_variant_inherits_everything_unless_declared():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     # Variant declares only mutation. Everything else must be identical.
     spec = Spec(name="SGA+test_mut", mutate=lambda ind, ctx: list(ind))
@@ -55,7 +55,7 @@ def test_variant_inherits_everything_unless_declared():
 
 
 def test_variant_overrides_only_change_declared_keys():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     spec = Spec(name="SGA+test_pop", overrides={"pop_size": 30})
     v = variant_from_baseline(b, spec)
@@ -67,7 +67,7 @@ def test_variant_overrides_only_change_declared_keys():
 
 
 def test_disallowed_override_raises():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     spec = Spec(name="SGA+bad", overrides={"name": "tampered"})
     with pytest.raises(ValueError, match="not allowed"):
@@ -75,7 +75,7 @@ def test_disallowed_override_raises():
 
 
 def test_wrapper_receives_baseline_slot():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     seen = {}
     def wrap(base):
@@ -88,7 +88,7 @@ def test_wrapper_receives_baseline_slot():
 
 
 def test_slot_and_wrapper_conflict_raises():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     spec = Spec(
         name="SGA+conflict",
@@ -125,7 +125,7 @@ def test_timetabling_baseline_constructs():
     """UCTP baseline: Yang & Jat 2011 SSGA — discrete-integer init,
     slot-uniform crossover, N1/N2/N3 mutation, LS1 refinement,
     steady-state loop, passthrough bounds."""
-    cfg = _load("timetabling")
+    cfg = _load("uctp")
     b = baseline_from_config(cfg, dim=100)
     assert b.init_fn.__name__ == "random_int_vector"
     assert b.crossover_fn.__name__ == "ssga_uniform_slot"
@@ -138,7 +138,7 @@ def test_timetabling_baseline_constructs():
 
 
 def test_variant_diff_reports_replacement_and_wrapper():
-    cfg = _load("engineering")
+    cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)
     spec = Spec(
         name="SGA+test",
@@ -163,7 +163,7 @@ def test_runner_persists_audit_files(tmp_path):
     out = subprocess.run(
         [sys.executable, "scripts/run_experiments.py",
          "--suite", "cec2022",
-         "--variants", "Levy_mut",
+         "--variants", "DE_mut",
          "--n-runs", "1",
          "--out-root", str(tmp_path),
          "--tag", "audit_smoke",
@@ -178,4 +178,4 @@ def test_runner_persists_audit_files(tmp_path):
     assert cfg["suite"] == "cec2022"
     diffs = json.loads((exp_dir / "variants_diff.json").read_text())
     names = [d["name"] for d in diffs]
-    assert "SGA_baseline" in names and "SGA+Levy_mut" in names
+    assert "SGA_baseline" in names and "SGA+DE_mut" in names

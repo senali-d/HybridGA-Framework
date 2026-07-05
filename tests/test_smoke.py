@@ -44,7 +44,7 @@ _TSP_BASELINE.name = "SGA_baseline"
 # every-feature-wired-up test needs to inspect this baseline's operator
 # slots so the SSGA-specific feature functions (mutate_ssga_n1n2n3,
 # replace_worst, refine_ls1) count as referenced.
-with (ROOT / "configs" / "timetabling.json").open() as _f:
+with (ROOT / "configs" / "uctp.json").open() as _f:
     _UCTP_CFG = json.load(_f)
 _UCTP_BASELINE = baseline_from_config(_UCTP_CFG, dim=100)
 _UCTP_BASELINE.name = "SSGA"
@@ -66,48 +66,9 @@ def test_variant_runs_clean(variant):
     assert np.all(sol <= np.asarray(problem.ub) + 1e-9)
 
 
-@pytest.mark.parametrize("name", ["Sphere", "Rastrigin", "Step"])
-def test_separable_smoke(name):
-    """Smoke test: default variant runs cleanly on representative separable
-    functions. Covers a local impl (Sphere, Step) and the pymoo-adapter
-    path (Rastrigin) so a future pymoo API break shows up in CI."""
-    from benchmarks.suites import SEPARABLE_FUNCS
-    Cls = dict(SEPARABLE_FUNCS)[name]
-    problem = Cls(ndim=DIM)
-    variant = next(v for v in VARIANTS if v.name == "SGA_baseline")
-    result = run_sga(problem, variant, pop_size=POP, max_fes=MAX_FES, seed=0)
-
-    assert result["error"] >= 0.0
-    assert result["fes_used"] <= MAX_FES
-    assert len(result["best_solution"]) == DIM
-    sol = np.asarray(result["best_solution"], dtype=float)
-    assert np.all(sol >= problem.lb - 1e-9)
-    assert np.all(sol <= problem.ub + 1e-9)
-
-
-def test_separable_optima():
-    """Each separable problem must report f_global at its known optimum.
-    Catches formula/bound regressions; runs in milliseconds (no GA)."""
-    from benchmarks.suites import SEPARABLE_FUNCS
-    optima = {
-        "Sphere": np.zeros(10),
-        "Rastrigin": np.zeros(10),
-        "Schwefel": np.full(10, 420.9687),
-        "SumOfDifferentPowers": np.zeros(10),
-        "Step": np.zeros(10),
-    }
-    for name, Cls in SEPARABLE_FUNCS:
-        p = Cls(ndim=10)
-        f = p.evaluate(optima[name])
-        assert abs(f - p.f_global) < 1e-3, (
-            f"{name}: f(x*)={f} but f_global={p.f_global}"
-        )
-        assert p.lb.shape == p.ub.shape == (10,)
-
-
 def test_seed_reproducibility():
     """Two runs with the same seed must give identical errors."""
-    variant = next(v for v in VARIANTS if v.name == "SGA+chaotic_perturb_mut")
+    variant = next(v for v in VARIANTS if v.name == "SGA+DE_mut")
     r1 = run_sga(F12022(ndim=DIM), variant, pop_size=POP, max_fes=MAX_FES, seed=7)
     r2 = run_sga(F12022(ndim=DIM), variant, pop_size=POP, max_fes=MAX_FES, seed=7)
     assert r1["error"] == r2["error"]
@@ -160,7 +121,7 @@ def test_engineering_problems_construct_and_evaluate(name):
     """Each engineering problem instantiates with the expected fixed dim,
     evaluates an in-bounds point, and uses Deb's scalar-encoded fitness:
     a deliberately infeasible point yields fitness >= F_OFFSET."""
-    from benchmarks.engineering import ENGINEERING_FUNCS
+    from benchmarks.cec2020_realworld import ENGINEERING_FUNCS
     Cls = dict(ENGINEERING_FUNCS)[name]
     problem = Cls()
 
@@ -192,7 +153,7 @@ def test_engineering_problems_construct_and_evaluate(name):
 def test_engineering_smoke_run(name):
     """One short SGA run on each engineering problem completes and returns
     a valid result dict."""
-    from benchmarks.engineering import ENGINEERING_FUNCS
+    from benchmarks.cec2020_realworld import ENGINEERING_FUNCS
     Cls = dict(ENGINEERING_FUNCS)[name]
     problem = Cls()
     variant = next(v for v in VARIANTS if v.name == "SGA_baseline")
@@ -209,7 +170,7 @@ def test_engineering_smoke_run(name):
 def test_spring_g2_singularity_is_finite():
     """At D == d the literature form of g2 is singular; evaluate() must
     still return a finite scalar (guard inside constraints)."""
-    from benchmarks.engineering import TensionCompressionSpring
+    from benchmarks.cec2020_realworld import TensionCompressionSpring
     problem = TensionCompressionSpring()
     # D == d, both inside their respective bounds (d in [0.05, 2.0],
     # D in [0.25, 1.30]); pick the overlap.
@@ -224,7 +185,7 @@ def test_engineering_feasible_point_below_offset():
     """For each engineering problem, locate a feasible point via rejection
     sampling and verify its fitness lies strictly below F_OFFSET — the
     other half of the Deb encoding contract."""
-    from benchmarks.engineering import ENGINEERING_FUNCS
+    from benchmarks.cec2020_realworld import ENGINEERING_FUNCS
     rng = np.random.default_rng(0)
     for name, Cls in ENGINEERING_FUNCS:
         problem = Cls()
@@ -244,16 +205,3 @@ def test_engineering_feasible_point_below_offset():
             pytest.fail(f"{name}: no feasible point found in 20000 samples")
 
 
-def test_islands_with_diversity():
-    """Regression check: islands path must apply diversity_fn (was skipped)."""
-    from ga.core import FeatureConfig
-    from ga import features as feat
-
-    cfg = FeatureConfig(
-        name="islands+immigrant",
-        n_islands=3,
-        migration_interval=4,
-        diversity_fn=feat.make_random_immigrant(fraction=0.2),
-    )
-    r = run_sga(F62022(ndim=DIM), cfg, pop_size=15, max_fes=300, seed=0)
-    assert r["error"] >= 0.0

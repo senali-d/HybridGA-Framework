@@ -14,8 +14,17 @@ USAGE:
 
 import argparse
 import json
+import multiprocessing as mp
 import sys
 from pathlib import Path
+
+# Use forkserver on macOS/Linux: fresh-process safety of `spawn` without
+# re-importing every dependency per worker, and lets workers share the
+# read-only distance/cost matrices loaded once in the helper.
+try:
+    mp.set_start_method("forkserver", force=True)
+except (RuntimeError, ValueError):
+    pass
 
 # Make src/ importable when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -68,9 +77,9 @@ def resolve_max_fes(suite_cfg, dim):
         return table[dim]
     return int(mf)
 from ga import features as feat
-from benchmarks.suites import (
-    run_protocol, run_separable_protocol, run_engineering_protocol,
-    run_tsp_protocol, run_timetabling_protocol,
+from benchmarks.protocols import (
+    run_protocol, run_cec2020_realworld_protocol,
+    run_tsp_protocol, run_uctp_protocol,
 )
 from analysis.stats import summarize, write_summary
 from analysis import plots as plot_mod
@@ -123,18 +132,19 @@ def main():
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
     parser.add_argument("--suite", type=str, default="cec2022",
-                        choices=["cec2022", "separable", "engineering",
-                                 "tsp", "timetabling"],
-                        help="Benchmark suite. 'cec2022' (default), "
-                             "'separable' (Sphere/Rastrigin/Schwefel/"
-                             "SumOfDifferentPowers/Step, any dim), or "
-                             "'engineering' (TensionCompressionSpring/"
-                             "PressureVessel/WeldedBeam/SpeedReducer; "
-                             "fixed dim, --dim ignored).")
+                        choices=["cec2022", "cec2020_realworld",
+                                 "tsp", "uctp"],
+                        help="Benchmark suite. 'cec2022' (12 CEC 2022 "
+                             "functions, default), 'cec2020_realworld' "
+                             "(5 mechanical-engineering problems from "
+                             "CEC 2020-RW; fixed dim, --dim ignored), "
+                             "'tsp' (6 TSPLIB instances), or "
+                             "'uctp' (30 timetabling instances).")
     parser.add_argument("--functions", type=str, default=None,
                         help="Comma-separated function names to run "
-                             "(e.g. F1,F3,F7 for cec2022; Sphere,Step for "
-                             "separable; WeldedBeam for engineering). "
+                             "(e.g. F1,F3,F7 for cec2022; WeldedBeam for "
+                             "cec2020_realworld; eil51 for tsp; "
+                             "socha_small1 for uctp). "
                              "Default: all in the suite.")
     parser.add_argument("--n-runs", type=int, default=None,
                         help="Independent seeds per (variant, function). "
@@ -238,10 +248,9 @@ def main():
 
     protocols = {
         "cec2022": run_protocol,
-        "separable": run_separable_protocol,
-        "engineering": run_engineering_protocol,
+        "cec2020_realworld": run_cec2020_realworld_protocol,
         "tsp": run_tsp_protocol,
-        "timetabling": run_timetabling_protocol,
+        "uctp": run_uctp_protocol,
     }
     if args.suite not in protocols:
         raise NotImplementedError(

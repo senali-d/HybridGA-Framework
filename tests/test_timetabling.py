@@ -33,7 +33,7 @@ needs_ttc = pytest.mark.skipif(
 
 @needs_socha
 def test_socha_parser_basics():
-    from benchmarks.timetabling import _parse_socha_instance
+    from benchmarks.uctp import _parse_socha_instance
     d = _parse_socha_instance(SOCHA_DIR / "easy01.tim")
     assert d["n_events"] > 0
     assert d["n_rooms"] > 0
@@ -48,7 +48,7 @@ def test_socha_parser_basics():
 @needs_socha
 @pytest.mark.parametrize("name", INSTANCES)
 def test_uctp_instance_basics(name):
-    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+    from benchmarks.uctp import SOCHA_FUNCS, N_TIMESLOTS
     Cls = dict(SOCHA_FUNCS)[name]
     p = Cls()
     assert p.ndim > 0
@@ -67,7 +67,7 @@ def test_assign_rooms_returns_valid_assignment():
     """assign_rooms produces room indices that are feasible (size + features)
     for every placed event and -1 for unplaced events. No room is double-
     booked within a slot."""
-    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+    from benchmarks.uctp import SOCHA_FUNCS, N_TIMESLOTS
     Cls = dict(SOCHA_FUNCS)["easy01"]
     p = Cls()
     rng = np.random.default_rng(7)
@@ -93,7 +93,7 @@ def test_assign_rooms_returns_valid_assignment():
 @needs_socha
 def test_score_consistency_with_evaluate():
     """evaluate(x) == score(x, assign_rooms(x)) in fitness."""
-    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+    from benchmarks.uctp import SOCHA_FUNCS, N_TIMESLOTS
     Cls = dict(SOCHA_FUNCS)["easy01"]
     p = Cls()
     rng = np.random.default_rng(11)
@@ -111,9 +111,9 @@ def test_uctp_baseline_smoke_run():
     stays in [0, 44], best_fitness is finite, beats a random assignment."""
     from ga.build import baseline_from_config
     from ga.core import run_trial
-    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+    from benchmarks.uctp import SOCHA_FUNCS, N_TIMESLOTS
 
-    cfg = json.loads((ROOT / "configs" / "timetabling.json").read_text())
+    cfg = json.loads((ROOT / "configs" / "uctp.json").read_text())
     # Trim s_max so the smoke test stays under a few seconds.
     cfg = dict(cfg)
     cfg["refine"] = {"kind": "ls1", "s_max": 3}
@@ -137,7 +137,7 @@ def test_uctp_baseline_smoke_run():
 
 @needs_ttc
 def test_ttc2002_parser_loads_comp01():
-    from benchmarks.timetabling import TTC2002_FUNCS
+    from benchmarks.uctp import TTC2002_FUNCS
     Cls = dict(TTC2002_FUNCS)["comp01"]
     p = Cls()
     assert p.ndim > 0
@@ -147,7 +147,7 @@ def test_ttc2002_parser_loads_comp01():
 
 
 def test_uctp_problem_missing_data_raises():
-    from benchmarks.timetabling import UCTPProblem
+    from benchmarks.uctp import UCTPProblem
     with pytest.raises(FileNotFoundError, match="fetch_"):
         UCTPProblem(name="does_not_exist", data_dir="/tmp/no_such_dir_xyz")
 
@@ -190,9 +190,9 @@ def test_uctp_replace_variants_preserve_pop_size(variant_name):
     from ga.build import baseline_from_config, variant_from_baseline
     from ga.core import run_trial
     from ga.variants import VARIANTS
-    from benchmarks.timetabling import SOCHA_FUNCS
+    from benchmarks.uctp import SOCHA_FUNCS
 
-    cfg = dict(json.loads((ROOT / "configs" / "timetabling.json").read_text()))
+    cfg = dict(json.loads((ROOT / "configs" / "uctp.json").read_text()))
     cfg["refine"] = {"kind": "ls1", "s_max": 1}
     Cls = dict(SOCHA_FUNCS)["easy01"]
     p = Cls()
@@ -226,9 +226,9 @@ def test_uctp_variant_smoke(variant_name):
     from ga.build import baseline_from_config, variant_from_baseline
     from ga.core import run_trial
     from ga.variants import variants_for_encoding
-    from benchmarks.timetabling import SOCHA_FUNCS, N_TIMESLOTS
+    from benchmarks.uctp import SOCHA_FUNCS, N_TIMESLOTS
 
-    cfg = dict(json.loads((ROOT / "configs" / "timetabling.json").read_text()))
+    cfg = dict(json.loads((ROOT / "configs" / "uctp.json").read_text()))
     cfg["refine"] = {"kind": "ls1", "s_max": 2}
 
     Cls = dict(SOCHA_FUNCS)["easy01"]
