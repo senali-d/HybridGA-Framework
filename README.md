@@ -6,14 +6,13 @@ Algorithm (SGA). Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022) +
 **SciPy** (statistical tests).
 
 The framework evaluates **17 named experiments** (1 baseline + 16 feature
-variants) across **four problem suites**:
+variants) across **three problem suites**:
 
 | Suite (`--suite`) | Problem class | Count | Encoding | Notes |
 |---|---|---|---|---|
 | `cec2022` | CEC 2022 single-objective black-box | 12 (F1–F12) | real | D ∈ {2, 10, 20}; competition protocol |
 | `cec2020_realworld` | CEC 2020 Real-World constrained design | 5 | real | Fixed D (3–7); Deb feasibility-rule scalar fitness |
 | `tsp` | Travelling Salesman (TSPLIB EUC_2D) | 6 instances | permutation | EAX crossover baseline |
-| `uctp` | University Course Timetabling (Socha 2002 + TTC 2002) | 30 instances | discrete | Yang & Jat 2011 SSGA + LS1 baseline |
 
 ## The 17 experiments
 
@@ -40,9 +39,9 @@ defined, each overriding exactly one operator slot:
 | `SGA+bbo_migration_cx` | crossover | BBO habitat migration |
 | `SGA+gsa_full_mut` | mutation | GSA mass-weighted gravitational attraction |
 
-Each variant has up to three implementations (`make_*`, `make_*_perm`,
-`make_*_uctp`) so it can run on every suite. The runner selects the right
-one automatically by encoding.
+Each variant has up to two implementations (`make_*`, `make_*_perm`) so it
+can run on every suite. The runner selects the right one automatically by
+encoding.
 
 ## Project layout
 
@@ -51,29 +50,25 @@ HybridGA-Framework/
 ├── src/
 │   ├── ga/
 │   │   ├── core.py         # SGA + SSGA loops, default operators, FeatureConfig
-│   │   ├── features.py     # All 16 variants' implementations (real / perm / uctp)
+│   │   ├── features.py     # All 16 variants' implementations (real / perm)
 │   │   ├── variants.py     # Spec registry — wires features into named variants
 │   │   └── build.py        # baseline_from_config + variant_from_baseline
 │   ├── benchmarks/
 │   │   ├── cec2022_functions.py    # 12 CEC 2022 functions (F1–F12)
 │   │   ├── cec2020_realworld.py    # 5 CEC 2020-RW engineering problems
 │   │   ├── tsp.py                  # 6 TSPLIB EUC_2D instances
-│   │   ├── uctp.py                 # 30 UCTP instances (Socha 2002 + TTC 2002)
 │   │   └── protocols.py            # Multi-variant runner + per-suite wrappers
 │   ├── analysis/           # stats.py (Wilcoxon/Friedman/Holm/Nemenyi) + plots.py
 │   └── persistence/        # recorder.py (JSON + parquet archives)
 ├── scripts/
 │   ├── run_experiments.py          # Primary CLI entry point
 │   ├── fetch_tsplib.py             # One-time: download TSPLIB .tsp files
-│   ├── fetch_socha.py              # One-time: download Socha 2002 .tim files
-│   ├── fetch_ttc2002.py            # One-time: download TTC 2002 .tim files
 │   ├── analyze_experiment.py       # Post-hoc stats on a single archive
 │   └── merge_and_analyze.py        # Merge & analyze multiple archives
 ├── configs/
 │   ├── cec2022.json
 │   ├── cec2020_realworld.json
-│   ├── tsp.json
-│   └── uctp.json
+│   └── tsp.json
 ├── tests/                  # pytest smoke + suite-specific checks
 ├── results/                # Per-run archives (gitignored)
 └── pyproject.toml
@@ -94,15 +89,12 @@ pip install -e .
 pytest tests/ -q
 ```
 
-### One-time data fetches (TSP & UCTP)
+### One-time data fetches (TSP)
 
-The TSPLIB `.tsp` files and Socha/TTC `.tim` files are not bundled. Run
-the fetchers once after install:
+The TSPLIB `.tsp` files are not bundled. Run the fetcher once after install:
 
 ```bash
 python scripts/fetch_tsplib.py     # -> data/tsplib/
-python scripts/fetch_socha.py      # -> data/socha/
-python scripts/fetch_ttc2002.py    # -> data/ttc2002/
 ```
 
 Re-running is safe — existing files are skipped unless you pass `--force`.
@@ -140,10 +132,6 @@ python scripts/run_experiments.py --suite cec2020_realworld --full --exact \
 # TSP — 6 TSPLIB instances × 30 runs × 500k FEs each
 python scripts/run_experiments.py --suite tsp --full --exact \
     --workers 12 --max-fes 500000 --tag tsp_all16 --variants "$ALL16"
-
-# UCTP — 30 timetabling instances × 30 runs × 500k FEs (multi-day on one box)
-python scripts/run_experiments.py --suite uctp --full --exact \
-    --workers 8 --tag uctp_all16 --variants "$ALL16"
 ```
 
 Per-suite quick variations are documented below.
@@ -249,32 +237,11 @@ python scripts/run_experiments.py --suite tsp --functions eil51,kroA100
 | ch150    | 150 | 6,528  |
 | kroA200  | 200 | 29,368 |
 
-### UCTP (timetabling)
-
-Discrete encoding (one timeslot integer per event). Baseline is the
-**Yang & Jat 2011 Steady-State GA + LS1 local search** (Algorithms 1+2);
-`configs/uctp.json` sets `loop=steady_state` + the LS1 refine block.
-
-```bash
-# Smoke run on one instance
-python scripts/run_experiments.py --suite uctp --functions easy01
-
-# Full protocol (30 instances; this is multi-day on a single core)
-python scripts/run_experiments.py --full --suite uctp --workers 8
-
-# Subset
-python scripts/run_experiments.py --suite uctp \
-    --functions easy01,medium03,comp05
-```
-
-Instance names: `easy01..05`, `medium01..05`, `hard01..05` (Socha 2002),
-and `comp01..20` (TTC 2002).
-
 ### Common flags
 
 | Flag | Default (demo / full) | Notes |
 |---|---|---|
-| `--suite` | `cec2022` | `cec2022`, `cec2020_realworld`, `tsp`, `uctp` |
+| `--suite` | `cec2022` | `cec2022`, `cec2020_realworld`, `tsp` |
 | `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored elsewhere |
 | `--pop-size` | 30 / 50 | Population size |
 | `--max-fes` | 5,000 / per-suite config | FE budget per run |
@@ -341,7 +308,6 @@ set (Wilcoxon is paired by seed index).
 pytest tests/ -q                       # all tests (~30 s)
 pytest tests/test_smoke.py -v          # variant-by-variant smoke
 pytest tests/test_tsp.py -q            # TSP-specific
-pytest tests/test_timetabling.py -q    # UCTP-specific
 ```
 
 The smoke suite runs every variant in the registry on a tiny budget (D=10,
@@ -356,8 +322,6 @@ multi-day run.
   functions): ~1–2 h per variant on one core. Use `--workers N` to
   parallelize across `(variant, function, seed)` tuples.
 - **Full at D=20** is ~5× heavier per variant.
-- **UCTP full protocol** (30 instances × 30 runs × 500k FEs) is the
-  heaviest suite; budget at least a full day on `--workers 8`.
 
 ## CEC 2022 protocol compliance
 
