@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hybridga"
 version = "0.1.0"
-description = "SGA + nature-inspired features on CEC 2022"
+description = "SGA + nature-inspired features on CEC 2022, CEC 2020 real-world and TSPLIB"
 requires-python = ">=3.9"
 dependencies = [
     "deap",
@@ -20,8 +20,10 @@ dependencies = [
     "statsmodels",
     "cloudpickle",
     "setuptools<81",
-    "pymoo>=0.6,<0.7",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

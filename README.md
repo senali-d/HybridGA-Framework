@@ -31,7 +31,7 @@ defined, each overriding exactly one operator slot:
 | `SGA+archive_replace` | replacement | External elite archive injection |
 | `SGA+metropolis_replace` | replacement | Simulated-annealing acceptance |
 | `SGA+restart` | diversity | Stagnation-triggered population restart |
-| `SGA+pher_minmax` | mutation / crossover | MMAS pheromone bounds (τ_min/τ_max) |
+| `SGA+pher_minmax` | mutation (real) / crossover + refine (TSP) | MMAS pheromone bounds (τ_min/τ_max) |
 | `SGA+immune_memory` | diversity | Memory-pool injection (AIS) |
 | `SGA+net_suppress` | diversity | Network-suppression diversity (AIS) |
 | `SGA+cuckoo_discovery` | diversity | Cuckoo abandon-and-rebuild |
@@ -42,9 +42,11 @@ defined, each overriding exactly one operator slot:
 | `SGA+bbo_migration_cx` | crossover | BBO habitat migration |
 | `SGA+gsa_full_mut` | mutation | GSA mass-weighted gravitational attraction |
 
-Each variant has a real-coded and a permutation implementation (`make_*`,
-`make_*_perm`) so it can run on every suite. The runner selects the right
-one automatically by encoding.
+Every variant runs on every suite. The three replacement variants (greedy,
+archive, Metropolis) only compare fitness values, so one implementation
+serves both encodings. The other 13 have a real-coded and a permutation
+implementation (`make_*`, `make_*_perm`), and the runner picks the one that
+matches the suite's encoding.
 
 ## Project layout
 
@@ -82,14 +84,16 @@ HybridGA-Framework/
 
 ## Quick start
 
+Requires Python 3.9 or later.
+
 ```bash
 # 1. Create and activate a virtual environment (first time only)
 python -m venv venv
 source venv/bin/activate          # macOS / Linux
 # venv\Scripts\activate           # Windows PowerShell
 
-# 2. Install the project + all dependencies
-pip install -e .
+# 2. Install the project, its dependencies, and pytest
+pip install -e ".[dev]"
 
 # 3. Run smoke tests (~30 s) before any long protocol run
 pytest tests/ -q
@@ -175,7 +179,7 @@ delete or rename a tag only when you want to replace its contents.
 ### CEC 2022 (real-coded, default)
 
 ```bash
-# Demo: small budget, ~3 min on one core
+# Demo: small budget, ~10 min on one core
 python scripts/run_experiments.py
 
 # Full competition protocol: 12 functions × 30 runs × MaxFES per CEC 2022 spec
@@ -243,7 +247,7 @@ python scripts/run_experiments.py --suite tsp --functions eil51,kroA100
 |---|---|---|
 | `--suite` | `cec2022` | `cec2022`, `cec2020_realworld`, `tsp` |
 | `--dim` | 10 | CEC 2022 only (10 or 20); ignored elsewhere |
-| `--pop-size` | 30 / 50 | Population size |
+| `--pop-size` | 30 / 100 | Population size |
 | `--max-fes` | 5,000 / per-suite config | FE budget per run |
 | `--max-gen` | - | Cap by generations; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
@@ -254,8 +258,9 @@ python scripts/run_experiments.py --suite tsp --functions eil51,kroA100
 | `--tag` | timestamp | Override archive folder name |
 
 Every run produces a per-batch archive under `results/<tag>/` containing
-`runs.parquet`, `history.parquet`, `suite_config.json`, `variants_diff.json`,
-and a `summary/` directory with the statistical analysis output.
+`config.json` (CLI arguments, git SHA, library versions), `runs.parquet`,
+`history.parquet`, `suite_config.json`, `variants_diff.json`, a `summary/`
+directory with the statistical analysis output, and a `plots/` directory.
 
 ## Feature injection
 
@@ -277,7 +282,7 @@ variant = variant_from_baseline(
 )
 
 problem = dict(CEC2022_FUNCS)["F1"](ndim=10)
-result = run_sga(problem, variant, pop_size=50, max_fes=200_000, seed=0)
+result = run_sga(problem, variant, pop_size=100, max_fes=200_000, seed=0)
 print(f"Best fitness: {result['best_fitness']}, error: {result['error']}")
 ```
 
@@ -331,9 +336,11 @@ multi-day run.
 ## Compute notes
 
 - **Demo** (`--n-runs 5`, `--max-fes 5000`, 17 experiments × 12 functions):
-  ~3 min on one core.
+  about 10 min on one core, including stats and plots (measured on an
+  Apple M2 Pro).
 - **Full CEC 2022 at D=10** (30 runs, MaxFES=200k, 17 experiments × 12
-  functions): ~1-2 h per variant on one core. Use `--workers N` to
+  functions): roughly 2 h per variant on one core (estimated from the demo
+  timing). Use `--workers N` to
   parallelize across `(variant, function, seed)` tuples.
 - **Full at D=20** is ~5× heavier per variant.
 
