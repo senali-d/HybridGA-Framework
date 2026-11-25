@@ -77,7 +77,7 @@ def test_every_public_feature_has_a_variant():
         if obj.__module__ == "ga.features" and not name.startswith("_")
     }
 
-    # Cover every encoding so encoding-specific operators (EAX, the GACO
+    # Cover every encoding so encoding-specific operators (EAX, the ACO
     # hybrid, ...) are included, not just the real-coded ones. Permutation
     # variants are built on the TSP baseline so the baseline's own perm
     # operators (EAX crossover etc.) count as "wired in".

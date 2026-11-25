@@ -48,11 +48,11 @@ class FeatureConfig:
         replace_fn=None,        # (parents, offspring, ctx) -> new population
         diversity_fn=None,      # (population, ctx) -> population (optional injection)
         refine_fn=None,         # (population, ctx) -> population (post-replacement local refinement,
-                                # e.g. nested PSO sub-loop on top-k for SGA-style hybrid)
+                                # e.g. the MMAS 2-opt refinement of SGA+pher_minmax on TSP)
         cx_prob=0.9,
         mut_prob=1.0,
         elitism_k=1,
-        archive_size=5,         # F37/F31/F09: capacity of historical-best archive
+        archive_size=5,         # capacity of the historical-best archive (SGA+archive_replace)
         bound_handling="clip",  # how the core treats out-of-bounds offspring:
                                 # "clip" | "reflect" | "reinit"
     ):
@@ -308,7 +308,7 @@ def apply_bounds(vec, lb, ub, mode="clip", rng=None):
     """
     arr = np.asarray(vec, dtype=float)
     # Scrub non-finite genes (NaN/±inf) that variant operators (GSA, SHADE,
-    # Lévy-flight, divisions by ~0, etc.) can occasionally produce. Replace
+    # divisions by ~0, etc.) can occasionally produce. Replace
     # with a fresh in-bounds uniform draw so downstream code never sees NaN.
     if mode != "passthrough":
         bad = ~np.isfinite(arr)
@@ -347,9 +347,7 @@ def apply_bounds(vec, lb, ub, mode="clip", rng=None):
 
 
 def make_individual(vec):
-    ind = creator.Individual(vec)
-    ind.age = 0  # A3 aging: lifespan counter, incremented per generation
-    return ind
+    return creator.Individual(vec)
 
 
 def evaluate_population(pop, evaluate_fn, eval_counter):
@@ -413,15 +411,14 @@ def run_sga(
         "best_so_far": None,
         "stagnation_counter": 0,
         "last_best_fitness": np.inf,
-        # Backbone extensions for nature-inspired features:
+        # Shared state read by the grafted features:
         "_population": [],                              # current pop, refreshed each gen
-        "archive": deque(maxlen=config.archive_size),   # historical-best archive (F09/F31/F37)
-        "shade_memory": {                               # F42 SHADE-style adaptive F/CR
+        "archive": deque(maxlen=config.archive_size),   # historical-best archive
+        "shade_memory": {                               # SHADE adaptive F/CR
             "F":  deque([0.5] * 5, maxlen=10),
             "CR": deque([0.5] * 5, maxlen=10),
         },
-        "t_ratio": 0.0,                                 # gen / max_gen_estimate (F40/41/44)
-        "hho_energy": 1.0,                              # |E| escape energy (F20/F43)
+        "t_ratio": 0.0,                                 # gen / max_gen_estimate
         "config": config,                               # so operators can read e.g. mut_prob
         "bound_handling": getattr(config, "bound_handling", "clip"),
         # Exposed for refine_fn / sub-loop operators that need to evaluate
@@ -429,7 +426,7 @@ def run_sga(
         "evaluate_fn": problem.evaluate,
         "eval_counter": None,  # filled in below once eval_counter is constructed
         # The problem object itself, so structure-aware operators (e.g. the
-        # GACO hybrid, which needs the TSP distance matrix for pheromone /
+        # TSP pheromone operators, which need the distance matrix for pheromone /
         # heuristic / 2-opt) can reach instance data the abstract
         # `(lb, ub, dim, evaluate)` interface does not expose.
         "problem": problem,
@@ -462,12 +459,10 @@ def run_sga(
         gen += 1
         ctx["gen"] = gen
         ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
-        # HHO escape energy: E = 2*E0*(1 - t/T), E0 ~ U(-1,1)
-        ctx["hho_energy"] = 2.0 * (rng.random() * 2.0 - 1.0) * (1.0 - ctx["t_ratio"])
+        # Unused draw, kept so the RNG stream (and therefore every result)
+        # stays identical to the archives reported in the thesis.
+        rng.random()
         ctx["_population"] = list(population)
-        # A3 aging: increment lifespan counter on every survivor
-        for _ind in population:
-            _ind.age = getattr(_ind, "age", 0) + 1
 
         # ---- Selection (with selection-pressure tracking) ----
         pre_select_fits = np.array([ind.fitness.values[0] for ind in population])
@@ -593,7 +588,7 @@ def run_sga(
             if not population:
                 break
 
-        # ---- Optional local refinement (e.g. SGA-style nested PSO) ----
+        # ---- Optional local refinement (SGA+pher_minmax on TSP) ----
         if config.refine_fn is not None:
             population = config.refine_fn(population, ctx)
             for ind in population:
@@ -612,7 +607,7 @@ def run_sga(
             best.fitness.values = cur_best.fitness.values
             ctx["best_so_far"] = best
             ctx["stagnation_counter"] = 0
-            # Push the new best into the historical archive (F09/F31/F37)
+            # Push the new best into the historical archive
             archived = creator.Individual(list(best))
             archived.fitness.values = best.fitness.values
             ctx["archive"].append(archived)

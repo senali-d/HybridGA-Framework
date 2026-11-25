@@ -41,7 +41,7 @@ class Spec:
 
     A variant changes exactly the operator slots passed here; everything
     else is inherited from the suite baseline. Use `overrides` to express
-    intentional scalar divergence (e.g. memetic variants needing a smaller
+    intentional scalar divergence (e.g. a variant needing a smaller
     population to fund local search). All other knobs MUST stay equal to
     the baseline.
 

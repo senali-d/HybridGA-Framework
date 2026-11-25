@@ -4,7 +4,7 @@ slot(s) the variant changes (or wraps) relative to the suite baseline.
 
 Anything not declared here is inherited bit-identical from the suite
 baseline built by `ga.build.baseline_from_config`. Per-variant scalar
-divergence (e.g. memetic SGA needing a smaller population) must appear in
+divergence (e.g. a smaller population for one variant) must appear in
 `Spec.overrides` where it is reviewable.
 
 Encodings are tagged so the runner can filter variants that don't apply
@@ -26,21 +26,16 @@ VARIANTS = [
     # REAL-CODED (cec2022, cec2020_realworld)
     # ================================================================
 
-    # DE_mut composes a population-aware filter on top of the suite's
-    # selection (binary tournament for engineering, k=3 for cec2022, ...).
-    Spec("SGA+DE_mut",
-         select_wrapper=feat.with_population_aware_select,
-         mutate=feat.make_de_mutation(F=0.5)),
+    Spec("SGA+DE_mut",            mutate=feat.make_de_mutation(F=0.5)),
     Spec("SGA+SHADE_mut",         mutate=feat.make_shade_de()),
     # greedy_replace, archive_replace, metropolis_replace operate purely on
-    # fitness comparisons + identity-preserving list() cloning — they don't
+    # fitness comparisons + identity-preserving list() cloning - they don't
     # touch gene values, so they're safe on permutation encodings too.
     Spec("SGA+greedy_replace",    replace=feat.replace_greedy, encodings=ANY),
     Spec("SGA+archive_replace",   replace=feat.make_archive_replace(fraction=0.1),
          encodings=ANY),
     Spec("SGA+metropolis_replace",
-         replace=feat.make_metropolis_replace(T0=1.0, T_end=1e-3,
-                                              schedule="exp", elitism_k=1),
+         replace=feat.make_metropolis_replace(T0=1.0, T_end=1e-3, elitism_k=1),
          encodings=ANY),
     Spec("SGA+restart",
          diversity=feat.make_diversity_restart(stagnation_threshold=15,
@@ -62,10 +57,10 @@ VARIANTS = [
     Spec("SGA+gsa_full_mut",      mutate=feat.make_gsa_full()),
 
     # ================================================================
-    # PERMUTATION (TSP) — TSP-edge-aware operators (F87–F93). Each
+    # PERMUTATION (TSP) - edge-aware operators (thesis sec:permutation). Each
     # preserves its named feature's metaphor — DE differential, SHADE
     # current-to-pbest, GSA gravity, BFO swim/tumble, krill food/herd,
-    # SOS three phases, BBO migration — but rewrites the update in terms
+    # SOS three phases, BBO migration - but rewrites the update in terms
     # of edges, swap sequences, and 2-opt moves.
     # ================================================================
 
@@ -85,8 +80,7 @@ VARIANTS = [
          crossover=feat.make_aco_recombination(alpha=1.0, beta=3.0, q0=0.3,
                                                rho=0.1, cand_k=16,
                                                local_update=True, xi=0.1),
-         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3,
-                                     deposit_scheme="mmas", cand_k=16),
+         refine=feat.make_aco_refine(rho=0.1, two_opt_top_k=3, cand_k=16),
          encodings=PERM),
     Spec("SGA+immune_memory",
          diversity=feat.make_immune_memory_pool_perm(k_inject=2,

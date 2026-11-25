@@ -1,18 +1,10 @@
 """
-features.py
------------
-Drop-in implementations of nature-inspired algorithm features.
-Each function matches the signature expected by `FeatureConfig` in sga_core.py.
+Implementations of the 16 grafted features studied in the thesis.
 
-Three families, all numbered in a single F-series:
-  - F01–F50: nature-inspired (chaotic, Lévy/DE/SHADE, GWO/WOA/HHO/SCA/FPA,
-    firefly/GSA/EO/SMA/Aquila/RSA/NOA/salp/MFO/bat/QPSO, etc.)
-  - F51–F62: artificial immune system (CLONALG, opt-IA, opt-aiNet,
-    negative selection, danger theory, HFIA)
-  - F63–F72: ant-colony / pheromone (binned per-dim pheromone matrix;
-    AS / EAS / MMAS / ASrank / heuristic / candidate-list)
-
-References for each feature are in the framework PDF (Section 5).
+Each function matches an operator-slot signature of `ga.core.FeatureConfig`.
+The real-coded versions (top of the file) run on the CEC 2022 and CEC 2020
+engineering suites; the `*_perm` versions and the ACO/EAX operators run on
+TSP. `ga.variants` wires each feature into its named variant.
 """
 
 import math
@@ -75,18 +67,6 @@ def make_diversity_restart(stagnation_threshold=20, restart_fraction=0.2):
         ctx["stagnation_counter"] = 0  # reset
         return keep + fresh
     return diversity_restart
-
-def with_population_aware_select(base_select_fn):
-    """Wrap a selection fn so it stashes the population into ctx['_population'].
-    DE mutation needs access to other individuals.
-
-    Note: core.run_sga now sets ctx['_population'] each generation, so this
-    wrapper is a no-op for new variants. Retained for backward compatibility.
-    """
-    def wrapped(population, k, ctx):
-        ctx["_population"] = population
-        return base_select_fn(population, k, ctx)
-    return wrapped
 
 def _best_in_pop(pop):
     return min(pop, key=lambda x: x.fitness.values[0])
@@ -218,7 +198,7 @@ def make_network_suppression(threshold_frac=0.02):
         return survivors
     return diversity_suppress
 
-def _pheromone_init(ctx, K=20, tau0=1.0, tau_min=0.01, tau_max=10.0):
+def _pheromone_init(ctx, K, tau_min, tau_max, tau0=1.0):
     if "pheromone" in ctx:
         return ctx["pheromone"]
     state = {
@@ -241,11 +221,8 @@ def _deposit_individual(tau, ind_vec, amount, lb, ub, K):
     for d, b in enumerate(bins):
         tau[d, int(b)] += amount
 
-def _sample_dim_value(tau_row, lb_d, ub_d, K, rng,
-                      alpha=1.0, eta_row=None, beta=0.0):
+def _sample_dim_value(tau_row, lb_d, ub_d, K, rng, alpha=1.0):
     w = np.asarray(tau_row, dtype=float) ** alpha
-    if eta_row is not None and beta != 0.0:
-        w = w * (np.asarray(eta_row, dtype=float) ** beta)
     w_sum = float(w.sum())
     if not np.isfinite(w_sum) or w_sum <= 0:
         b = int(rng.integers(0, K))
@@ -255,54 +232,21 @@ def _sample_dim_value(tau_row, lb_d, ub_d, K, rng,
     span = (float(ub_d) - float(lb_d)) / K
     return float(lb_d) + (b + float(rng.random())) * span
 
-def _maybe_evaporate_and_deposit(ctx, rho, deposit_strategy,
-                                 Q=1.0, e=5.0, w=6, clip=False):
-    """Run evaporate + deposit at most once per generation."""
+def _maybe_evaporate_and_deposit(ctx, rho, Q=1.0, clip=False):
+    """Run evaporate + deposit at most once per generation. Every member of
+    the population deposits Q / (1 + f)."""
     if ctx.get("_pheromone_last_gen") == ctx["gen"]:
         return
     pher = ctx["pheromone"]
     tau, K = pher["tau"], pher["K"]
     lb, ub = ctx["lb"], ctx["ub"]
     tau *= (1.0 - rho)
-    pop = ctx.get("_population", [])
-
-    def _fit(p):
+    for p in ctx.get("_population", []):
         try:
-            return float(p.fitness.values[0])
+            f = float(p.fitness.values[0])
         except Exception:
-            return None
-
-    if deposit_strategy in ("as", "eas") and pop:
-        for p in pop:
-            f = _fit(p)
-            if f is None:
-                continue
-            _deposit_individual(tau, p, Q / (1.0 + max(0.0, f)), lb, ub, K)
-        if deposit_strategy == "eas":
-            best = ctx.get("best_so_far")
-            if best is not None:
-                fb = _fit(best)
-                if fb is not None:
-                    _deposit_individual(tau, best,
-                                        e * Q / (1.0 + max(0.0, fb)),
-                                        lb, ub, K)
-    elif deposit_strategy == "asrank" and pop:
-        sorted_pop = _sorted_pop(pop)
-        top = sorted_pop[: max(1, w - 1)]
-        for r, p in enumerate(top):
-            f = _fit(p)
-            if f is None:
-                continue
-            weight = (w - 1 - r) * Q / (1.0 + max(0.0, f))
-            _deposit_individual(tau, p, weight, lb, ub, K)
-        best = ctx.get("best_so_far")
-        if best is not None:
-            fb = _fit(best)
-            if fb is not None:
-                _deposit_individual(tau, best,
-                                    w * Q / (1.0 + max(0.0, fb)),
-                                    lb, ub, K)
-
+            continue
+        _deposit_individual(tau, p, Q / (1.0 + max(0.0, f)), lb, ub, K)
     if clip:
         np.clip(tau, pher["tau_min"], pher["tau_max"], out=tau)
     ctx["_pheromone_last_gen"] = ctx["gen"]
@@ -313,7 +257,7 @@ def make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0, K=20, alpha=1.0):
         rng = ctx["rng"]
         lb, ub = ctx["lb"], ctx["ub"]
         pher = _pheromone_init(ctx, K=K, tau_min=tau_min, tau_max=tau_max)
-        _maybe_evaporate_and_deposit(ctx, rho, "as", Q=1.0, clip=True)
+        _maybe_evaporate_and_deposit(ctx, rho, Q=1.0, clip=True)
         tau = pher["tau"]
         d = int(rng.integers(0, ctx["dim"]))
         new = list(ind)
@@ -321,35 +265,22 @@ def make_pheromone_minmax(rho=0.1, tau_min=0.1, tau_max=5.0, K=20, alpha=1.0):
         return new
     return mutate_pher_mmas
 
-def make_metropolis_replace(T0=1.0, T_end=1e-3, schedule="exp", elitism_k=1):
+def make_metropolis_replace(T0=1.0, T_end=1e-3, elitism_k=1):
     """One-to-one replacement that *always* accepts a better offspring and
-    accepts a worse one with probability exp(-Δf / T(t)). Temperature T(t)
-    cools from T0 to T_end as ctx['t_ratio'] goes 0 → 1, mirroring SA's
-    explore-then-exploit transition. Combats premature convergence by
-    letting early generations climb out of basins.
-
-    schedule:
-      - "exp":    T = T0 * (T_end/T0) ** t_ratio   (geometric cooling)
-      - "linear": T = T0 + (T_end - T0) * t_ratio
-      - "cosine": T = T_end + 0.5*(T0-T_end)*(1+cos(pi*t_ratio))
+    accepts a worse one with probability exp(-Δf / T(t)). Temperature cools
+    exponentially, T = T0 * (T_end/T0) ** t_ratio, as ctx['t_ratio'] goes
+    0 → 1, mirroring SA's explore-then-exploit transition.
 
     Δf is normalized by max(|f_parent|, 1e-12) so the schedule is roughly
     scale-invariant across benchmarks. Top-`elitism_k` parents are always
     preserved unconditionally to guarantee monotone best-so-far.
     """
-    if schedule not in ("exp", "linear", "cosine"):
-        raise ValueError(f"schedule must be exp/linear/cosine, got {schedule}")
     if T0 <= 0 or T_end <= 0:
         raise ValueError("T0 and T_end must be positive")
 
     def _temperature(t):
         t = min(max(t, 0.0), 1.0)
-        if schedule == "exp":
-            return T0 * (T_end / T0) ** t
-        if schedule == "linear":
-            return T0 + (T_end - T0) * t
-        # cosine
-        return T_end + 0.5 * (T0 - T_end) * (1.0 + math.cos(math.pi * t))
+        return T0 * (T_end / T0) ** t
 
     def replace_metropolis(parents, offspring, ctx):
         rng = ctx["rng"]
@@ -391,8 +322,7 @@ def make_cuckoo_discovery(pa=0.25):
     `x' = x + r * (x_perm1 - x_perm2)` where the two permutations are random
     other nests (Yang & Deb 2009's biased-walk discovery rule). The new vector
     is bound-handled and evaluated by the core's post-diversity eval loop.
-    Pairs with Lévy mutation (F13) for the full CS algorithm; standalone here
-    so the ablation isolates the discovery mechanism.
+    Standalone (no Lévy flight) so the graft isolates the discovery mechanism.
     """
     def diversity_cuckoo(population, ctx):
         rng = ctx["rng"]
@@ -411,7 +341,6 @@ def make_cuckoo_discovery(pa=0.25):
             new_x = x + r * (xj - xk)
             new_x = np.clip(new_x, lb, ub)
             new_ind = creator.Individual(new_x.tolist())
-            new_ind.age = 0
             population[i] = new_ind
         return population
     return diversity_cuckoo
@@ -471,7 +400,6 @@ def make_abc_scout(limit=None):
             if getattr(ind, "trial", 0) > lim:
                 scout_vec = rng.uniform(lb, ub).tolist()
                 scout = creator.Individual(scout_vec)
-                scout.age = 0
                 scout.trial = 0
                 # Leave fitness invalid; core's post-replace eval will score it.
                 survivors[i] = scout
@@ -742,11 +670,10 @@ def crossover_bbo(p1, p2, ctx):
     return c1, c2
 
 def make_gsa_full(G0=100.0, alpha=20.0, kbest_final_frac=0.02):
-    """Full GSA attraction with the canonical pieces F26 simplified:
+    """GSA mass-weighted gravitational attraction:
       - Gravitational constant decays as G(t) = G0 * exp(-alpha * t_ratio).
       - Attraction sums only over the K-best subset, with K shrinking from N
         down to max(2, kbest_final_frac * N) over the run.
-    Mass calculation otherwise unchanged from F26.
     """
     def mutate_gsa(ind, ctx):
         rng = ctx["rng"]
@@ -806,7 +733,7 @@ def _aco_problem_dist(ctx):
     D = getattr(problem, "dist", None)
     if D is None:
         raise ValueError(
-            "GACO operators require a TSP-style problem exposing a `.dist` "
+            "ACO operators require a TSP-style problem exposing a `.dist` "
             "matrix on ctx['problem']; got "
             f"{type(problem).__name__ if problem is not None else None}."
         )
@@ -977,31 +904,18 @@ def _two_opt_best_move(tour, D, iu, ju):
     return int(iu[k]), int(ju[k]), float(g[k])
 
 def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
-                    deposit_q=1.0, deposit_scheme="mmas",
-                    asrank_w=6, eas_e=None, cand_k=16):
+                    deposit_q=1.0, cand_k=16):
     """Per-generation refine: 2-opt local search on the elite, then a global
     pheromone update. Shares ctx['_aco'] with the crossover.
 
     `two_opt_max_moves` caps accepted 2-opt moves per individual per
     generation (default: n // 8, min 5). Each accepted move costs 1 FE.
 
-    `deposit_scheme` selects how the (evaporated) pheromone matrix is
-    reinforced:
-      - "mmas"   : iteration-best and global-best tours each deposit 1/length
-                   (MAX-MIN Ant System).
-      - "asrank" : the (w-1) best tours in the population deposit
-                   (w-r)/length_r for ranks r = 1..w-1; the global-best tour
-                   deposits w/length_gb (rank-based Ant System).
-      - "eas"    : every population member deposits 1/length (classic Ant
-                   System), and the global-best tour additionally deposits
-                   e/length_gb (Elitist Ant System; default e = n).
+    The pheromone update is MAX-MIN Ant System: the iteration-best and
+    global-best tours each deposit 1/length.
     After deposition the matrix is clamped to [tau_max/(2n), tau_max] with
-    tau_max = 1/(rho * best_length_so_far), keeping every scheme bounded.
+    tau_max = 1/(rho * best_length_so_far), keeping the matrix bounded.
     """
-    scheme = str(deposit_scheme).lower()
-    if scheme not in ("mmas", "asrank", "eas"):
-        raise ValueError(f"unknown deposit_scheme: {deposit_scheme!r}")
-
     def refine_aco(population, ctx):
         st = _aco_state(ctx, rho, cand_k=cand_k)
         n = st["n"]
@@ -1037,7 +951,7 @@ def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
                 ind[:] = tour
                 ind.fitness.values = (cur_len,)
 
-        # ---- global pheromone update: evaporate, then scheme-specific deposit ----
+        # ---- global pheromone update: evaporate, then MMAS deposit ----
         tau = st["tau"]
         tau *= (1.0 - st["rho"])
 
@@ -1059,28 +973,11 @@ def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
         len_gb = _len(_as_perm(gb, n))
         st["best_len"] = min(st["best_len"], len_gb, _len(_as_perm(iter_best, n)))
 
-        if scheme == "mmas":
-            li = _len(_as_perm(iter_best, n))
-            if li > 0:
-                deposit(iter_best, deposit_q / li)
-            if len_gb > 0:
-                deposit(gb, deposit_q / len_gb)
-        elif scheme == "asrank":
-            w = int(max(2, asrank_w))
-            for r, ind in enumerate(ranked[:w - 1], start=1):
-                length = _len(_as_perm(ind, n))
-                if length > 0:
-                    deposit(ind, deposit_q * (w - r) / length)
-            if len_gb > 0:
-                deposit(gb, deposit_q * w / len_gb)
-        else:  # "eas"
-            for ind in population:
-                length = _len(_as_perm(ind, n))
-                if length > 0:
-                    deposit(ind, deposit_q / length)
-            e = float(eas_e) if eas_e is not None else float(n)
-            if len_gb > 0:
-                deposit(gb, e * deposit_q / len_gb)
+        li = _len(_as_perm(iter_best, n))
+        if li > 0:
+            deposit(iter_best, deposit_q / li)
+        if len_gb > 0:
+            deposit(gb, deposit_q / len_gb)
 
         # MMAS-style bounds, refreshed from the best length seen so far.
         st["tau_max"] = 1.0 / (st["rho"] * max(st["best_len"], 1e-9))
@@ -1090,7 +987,7 @@ def make_aco_refine(rho=0.1, two_opt_top_k=3, two_opt_max_moves=None,
         np.fill_diagonal(tau, 0.0)
         return population
 
-    refine_aco.__name__ = f"aco_refine_2opt{two_opt_top_k}_{scheme}_rho{rho:g}"
+    refine_aco.__name__ = f"aco_refine_2opt{two_opt_top_k}_mmas_rho{rho:g}"
     return refine_aco
 
 def _perm_adj_lists(perm):
@@ -1371,7 +1268,6 @@ def make_abc_scout_perm(limit=None):
         for i, ind in enumerate(survivors):
             if getattr(ind, "trial", 0) > lim:
                 scout = creator.Individual(_random_perm(dim, rng))
-                scout.age = 0
                 scout.trial = 0
                 survivors[i] = scout
         return survivors
@@ -1388,7 +1284,6 @@ def make_cuckoo_discovery_perm(pa=0.25):
             if rng.random() >= pa:
                 continue
             new_ind = creator.Individual(_random_perm(dim, rng))
-            new_ind.age = 0
             population[i] = new_ind
         return population
     return diversity_cuckoo_perm
