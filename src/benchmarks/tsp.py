@@ -7,9 +7,9 @@ unchanged. `evaluate(perm)` accepts a permutation of `{0..n-1}` and
 returns the closed-tour length using TSPLIB's nearest-integer Euclidean
 distance convention (`int(round(d))`).
 
-Instance files (`.tsp`) are not bundled. Run `scripts/fetch_tsplib.py`
-once to populate `data/tsplib/` from a public TSPLIB mirror, or set the
-`TSPLIB_DIR` environment variable to point at an existing copy.
+Instance files live in `data/tsplib/`. `scripts/fetch_tsplib.py` can
+re-download them from a public TSPLIB mirror, or set the `TSPLIB_DIR`
+environment variable to point at an existing copy.
 
 Bound handling: combinatorial encoding has no meaningful clip/reflect
 operation, so suites using TSP set `bound_handling: "passthrough"` in
@@ -29,12 +29,8 @@ _TSPLIB_OPTIMA = {
     "eil51":    426,
     "berlin52": 7542,
     "kroA100":  21282,
-    "eil101":   629,
-    "ch130":    6110,
     "ch150":    6528,
     "kroA200":  29368,
-    "a280":     2579,
-    "lin318":   42029,
     "pcb442":   50778,
 }
 
@@ -166,17 +162,13 @@ def _make_instance(name):
     return cls
 
 
-# Registry: order matches the spec in configs/tsp.json (plus st70).
+# Registry: order matches configs/tsp.json.
 TSPLIB_FUNCS = [
     ("st70",     _make_instance("st70")),
     ("eil51",    _make_instance("eil51")),
     ("berlin52", _make_instance("berlin52")),
     ("kroA100",  _make_instance("kroA100")),
-    ("eil101",   _make_instance("eil101")),
-    ("ch130",    _make_instance("ch130")),
     ("ch150",    _make_instance("ch150")),
     ("kroA200",  _make_instance("kroA200")),
-    ("a280",     _make_instance("a280")),
-    ("lin318",   _make_instance("lin318")),
     ("pcb442",   _make_instance("pcb442")),
 ]

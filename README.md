@@ -1,5 +1,8 @@
 # HybridGA-Framework
 
+Source code for the MCS thesis *Impact of Adopting Features of Different
+Recent Natural Algorithms in Simple Genetic Algorithm on Its Behavior*.
+
 A clean experimental pipeline for studying how features extracted from
 nature-inspired metaheuristics affect the behavior of the Simple Genetic
 Algorithm (SGA). Built on **DEAP** (GA primitives) + **Opfunu** (CEC 2022) +
@@ -10,9 +13,9 @@ variants) across **three problem suites**:
 
 | Suite (`--suite`) | Problem class | Count | Encoding | Notes |
 |---|---|---|---|---|
-| `cec2022` | CEC 2022 single-objective black-box | 12 (F1–F12) | real | D ∈ {2, 10, 20}; competition protocol |
-| `cec2020_realworld` | CEC 2020 Real-World constrained design | 5 | real | Fixed D (3–7); Deb feasibility-rule scalar fitness |
-| `tsp` | Travelling Salesman (TSPLIB EUC_2D) | 6 instances | permutation | EAX crossover baseline |
+| `cec2022` | CEC 2022 single-objective black-box | 12 (F1-F12) | real | D ∈ {10, 20}; competition protocol |
+| `cec2020_realworld` | CEC 2020 Real-World constrained design | 5 | real | Fixed D (2-7); Deb feasibility-rule scalar fitness |
+| `tsp` | Travelling Salesman (TSPLIB EUC_2D) | 7 instances | permutation | EAX crossover baseline |
 
 ## The 17 experiments
 
@@ -39,9 +42,9 @@ defined, each overriding exactly one operator slot:
 | `SGA+bbo_migration_cx` | crossover | BBO habitat migration |
 | `SGA+gsa_full_mut` | mutation | GSA mass-weighted gravitational attraction |
 
-Each variant has up to two implementations (`make_*`, `make_*_perm`) so it
-can run on every suite. The runner selects the right one automatically by
-encoding.
+Each variant has a real-coded and a permutation implementation (`make_*`,
+`make_*_perm`) so it can run on every suite. The runner selects the right
+one automatically by encoding.
 
 ## Project layout
 
@@ -49,26 +52,29 @@ encoding.
 HybridGA-Framework/
 ├── src/
 │   ├── ga/
-│   │   ├── core.py         # SGA + SSGA loops, default operators, FeatureConfig
+│   │   ├── core.py         # SGA loop, default operators, FeatureConfig
 │   │   ├── features.py     # All 16 variants' implementations (real / perm)
-│   │   ├── variants.py     # Spec registry — wires features into named variants
+│   │   ├── variants.py     # Spec registry - wires features into named variants
 │   │   └── build.py        # baseline_from_config + variant_from_baseline
 │   ├── benchmarks/
-│   │   ├── cec2022_functions.py    # 12 CEC 2022 functions (F1–F12)
+│   │   ├── cec2022_functions.py    # 12 CEC 2022 functions (F1-F12)
 │   │   ├── cec2020_realworld.py    # 5 CEC 2020-RW engineering problems
-│   │   ├── tsp.py                  # 6 TSPLIB EUC_2D instances
+│   │   ├── tsp.py                  # 7 TSPLIB EUC_2D instances
 │   │   └── protocols.py            # Multi-variant runner + per-suite wrappers
 │   ├── analysis/           # stats.py (Wilcoxon/Friedman/Holm/Nemenyi) + plots.py
 │   └── persistence/        # recorder.py (JSON + parquet archives)
 ├── scripts/
 │   ├── run_experiments.py          # Primary CLI entry point
-│   ├── fetch_tsplib.py             # One-time: download TSPLIB .tsp files
+│   ├── fetch_tsplib.py             # Re-download the TSPLIB .tsp files
 │   ├── analyze_experiment.py       # Post-hoc stats on a single archive
 │   └── merge_and_analyze.py        # Merge & analyze multiple archives
+├── posthoc_analysis/
+│   └── run_posthoc.py              # Suite-level Friedman/Holm/Nemenyi + CD diagrams
 ├── configs/
 │   ├── cec2022.json
 │   ├── cec2020_realworld.json
 │   └── tsp.json
+├── data/tsplib/            # The 7 TSPLIB instances used in the thesis
 ├── tests/                  # pytest smoke + suite-specific checks
 ├── results/                # Per-run archives (gitignored)
 └── pyproject.toml
@@ -89,15 +95,8 @@ pip install -e .
 pytest tests/ -q
 ```
 
-### One-time data fetches (TSP)
-
-The TSPLIB `.tsp` files are not bundled. Run the fetcher once after install:
-
-```bash
-python scripts/fetch_tsplib.py     # -> data/tsplib/
-```
-
-Re-running is safe — existing files are skipped unless you pass `--force`.
+The TSPLIB `.tsp` files are bundled in `data/tsplib/`. To re-download them
+from a public TSPLIB mirror, run `python scripts/fetch_tsplib.py --force`.
 
 ## Running experiments
 
@@ -109,7 +108,7 @@ python scripts/run_experiments.py --suite <suite> [flags]
 
 ### Full sweep: all 16 variants + baseline, every suite
 
-The same 16 variant names are valid on every suite — the runner picks the
+The same 16 variant names are valid on every suite - the runner picks the
 encoding-appropriate implementation from `configs/<suite>.json` (`encoding`
 field). `SGA_baseline` is always included automatically; do not list it in
 `--variants`. Each command writes to its own `results/<tag>/` folder and
@@ -121,29 +120,29 @@ ALL16="DE_mut,SHADE_mut,greedy_replace,archive_replace,metropolis_replace,\
 restart,pher_minmax,immune_memory,net_suppress,cuckoo_discovery,abc_scout,\
 bfo_chemotaxis,krill_herd_mut,sos_mut,bbo_migration_cx,gsa_full_mut"
 
-# CEC 2022 — real-coded, 12 functions × 30 runs (D=10, MaxFES=200k from protocol)
+# CEC 2022 - real-coded, 12 functions × 30 runs (MaxFES from protocol)
 python scripts/run_experiments.py --suite cec2022 --full --exact \
     --dim 10 --workers 12 --tag cec2022_D10_all16 --variants "$ALL16"
+python scripts/run_experiments.py --suite cec2022 --full --exact \
+    --dim 20 --workers 12 --tag cec2022_D20_all16 --variants "$ALL16"
 
-# CEC 2020 Real-World — 5 engineering problems × 30 runs (fixed dim per problem)
+# CEC 2020 Real-World - 5 engineering problems × 30 runs (fixed dim per problem)
 python scripts/run_experiments.py --suite cec2020_realworld --full --exact \
     --workers 8 --tag cec2020rw_all16 --variants "$ALL16"
 
-# TSP — 6 TSPLIB instances × 30 runs × 500k FEs each
+# TSP - 7 TSPLIB instances × 30 runs × 500k FEs each
 python scripts/run_experiments.py --suite tsp --full --exact \
     --workers 12 --max-fes 500000 --tag tsp_all16 --variants "$ALL16"
 ```
 
-Per-suite quick variations are documented below.
-
 ### Full sweep: one function per batch (isolated archives)
 
-Sometimes you want a **separate archive per function/instance** — for
+Sometimes you want a **separate archive per function/instance** - for
 incremental commits, per-function plots, or to resume part-way through.
 The loops below reuse `$ALL16` from the previous subsection.
 
 ```bash
-# CEC 2022 — one tag per function (F1..F12)
+# CEC 2022 - one tag per function (F1..F12)
 for fn in F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12; do
   python scripts/run_experiments.py --suite cec2022 --full --exact \
       --dim 10 --workers 12 \
@@ -151,7 +150,7 @@ for fn in F1 F2 F3 F4 F5 F6 F7 F8 F9 F10 F11 F12; do
       --variants "$ALL16"
 done
 
-# CEC 2020 Real-World — one tag per engineering problem
+# CEC 2020 Real-World - one tag per engineering problem
 for fn in TensionCompressionSpring PressureVessel WeldedBeam \
           ThreeBarTruss SpeedReducer; do
   python scripts/run_experiments.py --suite cec2020_realworld --full --exact \
@@ -160,8 +159,8 @@ for fn in TensionCompressionSpring PressureVessel WeldedBeam \
       --variants "$ALL16"
 done
 
-# TSP — one tag per TSPLIB instance
-for fn in eil51 berlin52 st70 kroA100 ch150 kroA200; do
+# TSP - one tag per TSPLIB instance
+for fn in eil51 berlin52 st70 kroA100 ch150 kroA200 pcb442; do
   python scripts/run_experiments.py --suite tsp --full --exact \
       --workers 12 --max-fes 500000 \
       --functions "$fn" --tag "tsp_${fn}_all16" \
@@ -190,7 +189,7 @@ python scripts/run_experiments.py --variants DE_mut,SHADE_mut --exact
 
 ### CEC 2020 Real-World (engineering)
 
-Each problem has fixed dimensionality (3–7), so `--dim` is ignored.
+Each problem has fixed dimensionality (2-7), so `--dim` is ignored.
 Constraints are encoded into scalar fitness via Deb's feasibility rules
 (every operator works unchanged).
 
@@ -213,15 +212,15 @@ exposed on the class).
 
 ### TSP (TSPLIB EUC_2D)
 
-Permutation encoding. Baseline uses **EAX crossover** + swap mutation.
-Each instance has a fixed city count baked into its `.tsp` file, so
-`--dim` is ignored.
+Permutation encoding. Baseline uses **EAX crossover** + swap/inversion
+mutation, with a 500k FE budget per run (`configs/tsp.json`). Each instance
+has a fixed city count baked into its `.tsp` file, so `--dim` is ignored.
 
 ```bash
 # Smoke
 python scripts/run_experiments.py --suite tsp
 
-# Full protocol: 6 instances × 30 runs × 50k FEs each
+# Full protocol: 7 instances × 30 runs × 500k FEs each
 python scripts/run_experiments.py --full --suite tsp --workers 8
 
 # Subset of instances
@@ -236,16 +235,17 @@ python scripts/run_experiments.py --suite tsp --functions eil51,kroA100
 | kroA100  | 100 | 21,282 |
 | ch150    | 150 | 6,528  |
 | kroA200  | 200 | 29,368 |
+| pcb442   | 442 | 50,778 |
 
 ### Common flags
 
 | Flag | Default (demo / full) | Notes |
 |---|---|---|
 | `--suite` | `cec2022` | `cec2022`, `cec2020_realworld`, `tsp` |
-| `--dim` | 10 | CEC 2022 supports {2, 10, 20}; ignored elsewhere |
+| `--dim` | 10 | CEC 2022 only (10 or 20); ignored elsewhere |
 | `--pop-size` | 30 / 50 | Population size |
 | `--max-fes` | 5,000 / per-suite config | FE budget per run |
-| `--max-gen` | — | Cap by generations; sets `max_fes = max_gen × pop_size` |
+| `--max-gen` | - | Cap by generations; sets `max_fes = max_gen × pop_size` |
 | `--n-runs` | 5 / 30 | Independent seeds per (variant, function) |
 | `--variants` | (all) | Comma-separated substring filter, e.g. `DE_mut,SHADE_mut`. Add `--exact` to match the full name |
 | `--functions` | (all in suite) | Comma-separated function/instance names |
@@ -259,18 +259,21 @@ and a `summary/` directory with the statistical analysis output.
 
 ## Feature injection
 
-Every variant is just a `FeatureConfig` with overridden plug-points; the
-default operators stay in place for slots you don't touch.
+A variant is a `Spec` that names the operator slot(s) it replaces; every
+other slot is inherited unchanged from the suite baseline built from
+`configs/<suite>.json`. The registry of all 16 variants is
+`src/ga/variants.py`.
 
 ```python
-from ga.core import FeatureConfig, run_sga
+import json
+from ga.build import Spec, baseline_from_config, variant_from_baseline
+from ga.core import run_sga
 from ga import features as feat
 from benchmarks.cec2022_functions import CEC2022_FUNCS
 
-variant = FeatureConfig(
-    name="SGA+DE_mut",
-    mutate_fn=feat.make_de_mutation(F=0.5),
-    select_wrapper=feat.with_population_aware_select,
+baseline = baseline_from_config(json.load(open("configs/cec2022.json")), dim=10)
+variant = variant_from_baseline(
+    baseline, Spec("SGA+DE_mut", mutate=feat.make_de_mutation(F=0.5)),
 )
 
 problem = dict(CEC2022_FUNCS)["F1"](ndim=10)
@@ -302,6 +305,17 @@ python scripts/merge_and_analyze.py \
 Merged archives must share `--dim`, `--max-fes`, `--pop-size`, and the seed
 set (Wilcoxon is paired by seed index).
 
+### Suite-level post-hoc (thesis tables and CD diagrams)
+
+`posthoc_analysis/run_posthoc.py` pools each suite's per-function archives
+and recomputes the suite-level Friedman, Holm and Nemenyi statistics, plus a
+critical-difference diagram per suite. The archive tags it reads are listed
+in its `SUITES` table.
+
+```bash
+python posthoc_analysis/run_posthoc.py --results results --out posthoc_analysis/results
+```
+
 ## Smoke tests
 
 ```bash
@@ -319,14 +333,14 @@ multi-day run.
 - **Demo** (`--n-runs 5`, `--max-fes 5000`, 17 experiments × 12 functions):
   ~3 min on one core.
 - **Full CEC 2022 at D=10** (30 runs, MaxFES=200k, 17 experiments × 12
-  functions): ~1–2 h per variant on one core. Use `--workers N` to
+  functions): ~1-2 h per variant on one core. Use `--workers N` to
   parallelize across `(variant, function, seed)` tuples.
 - **Full at D=20** is ~5× heavier per variant.
 
 ## CEC 2022 protocol compliance
 
-- **Suite:** 12 functions (F1–F12), search range [-100, 100]ᴰ
+- **Suite:** 12 functions (F1-F12), search range [-100, 100]ᴰ
 - **Dimensions:** 10 and 20
 - **MaxFES:** 200,000 (D=10) / 1,000,000 (D=20)
 - **Independent runs:** 30 per (variant, function)
-- **Reported metric:** error = f(x_best) − F*; values < 1e-8 set to 0
+- **Reported metric:** error = f(x_best) - F*; values < 1e-8 set to 0

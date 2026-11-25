@@ -52,15 +52,9 @@ class FeatureConfig:
         cx_prob=0.9,
         mut_prob=1.0,
         elitism_k=1,
-        n_islands=1,            # F46: number of sub-populations (1 = single panmictic pop)
-        migration_interval=10,  # F46: migrate every G generations
         archive_size=5,         # F37/F31/F09: capacity of historical-best archive
         bound_handling="clip",  # how the core treats out-of-bounds offspring:
                                 # "clip" | "reflect" | "reinit"
-        loop_kind="generational",  # "generational" (default) -> run_sga;
-                                # "steady_state" -> run_ssga (one child per
-                                # iteration, paper-faithful Yang & Jat 2011)
-        refine_s_max=20,        # per-individual LS1 move budget (UCTP SSGA)
     ):
         self.name = name
         self.init_fn = init_fn
@@ -73,8 +67,6 @@ class FeatureConfig:
         self.cx_prob = cx_prob
         self.mut_prob = mut_prob
         self.elitism_k = elitism_k
-        self.n_islands = n_islands
-        self.migration_interval = migration_interval
         self.archive_size = archive_size
         if bound_handling not in ("clip", "reflect", "reinit", "passthrough"):
             raise ValueError(
@@ -82,13 +74,6 @@ class FeatureConfig:
                 f"'passthrough'; got {bound_handling!r}"
             )
         self.bound_handling = bound_handling
-        if loop_kind not in ("generational", "steady_state"):
-            raise ValueError(
-                f"loop_kind must be 'generational' or 'steady_state'; "
-                f"got {loop_kind!r}"
-            )
-        self.loop_kind = loop_kind
-        self.refine_s_max = int(refine_s_max)
 
 
 # ===================== DEFAULT (BASELINE) OPERATORS =====================
@@ -125,10 +110,9 @@ def default_mutate(ind, ctx):
 
 def generational_elitism(parents, offspring, k):
     """k-elitism replacement: keep best k parents, fill remaining slots
-    with the best offspring. When called from a steady-state loop where
-    `len(offspring) < len(parents) - k`, the missing slots are backfilled
-    from the next-best non-elite parents — preserving the original pop
-    size (equivalent to "drop worst, append offspring" with k elites)."""
+    with the best offspring. If `len(offspring) < len(parents) - k`, the
+    missing slots are backfilled from the next-best non-elite parents so
+    the population size is preserved."""
     parents_sorted = sorted(parents, key=lambda x: x.fitness.values[0])
     elites = parents_sorted[:k]
     offspring_sorted = sorted(offspring, key=lambda x: x.fitness.values[0])
@@ -181,20 +165,6 @@ def make_init(spec):
             return [list(rng.permutation(dim)) for _ in range(n)]
         _init.__name__ = "random_permutation"
         return _init
-    if kind == "random_int_vector":
-        # Discrete-integer init: each gene drawn uniformly from
-        # {lb_i, ..., ub_i} (inclusive). Used by the UCTP suite where
-        # genes are timeslot ids in {0..44}.
-        def _init(n, dim, lb, ub, ctx):
-            rng = ctx["rng"]
-            lo = np.asarray(lb, dtype=np.int64)
-            hi = np.asarray(ub, dtype=np.int64)
-            return [
-                rng.integers(lo, hi + 1).tolist()
-                for _ in range(n)
-            ]
-        _init.__name__ = "random_int_vector"
-        return _init
     raise ValueError(f"unknown init kind: {kind!r}")
 
 
@@ -239,23 +209,6 @@ def make_crossover(spec):
         # a hard dependency on the feature library.
         from ga import features as feat
         return feat.make_eax()
-    if kind in ("uniform_int", "ssga_uniform_slot"):
-        # Discrete uniform crossover: for each gene, child1 takes p1's
-        # value with prob 0.5, else p2's; child2 takes the complement.
-        # Genes stay in their original domain since both parents are
-        # already in-bounds, so no clip is needed.
-        # `ssga_uniform_slot` is the Yang & Jat 2011 Algorithm 6 spelling:
-        # same per-gene 50/50 inheritance, then re-run the matching at
-        # evaluation time (handled inside UCTPProblem.evaluate).
-        def _cx(p1, p2, ctx):
-            rng = ctx["rng"]
-            n = len(p1)
-            mask = rng.random(n) < 0.5
-            c1 = [int(p1[i]) if mask[i] else int(p2[i]) for i in range(n)]
-            c2 = [int(p2[i]) if mask[i] else int(p1[i]) for i in range(n)]
-            return c1, c2
-        _cx.__name__ = kind
-        return _cx
     raise ValueError(f"unknown crossover kind: {kind!r}")
 
 
@@ -316,104 +269,26 @@ def make_mutation(spec, dim):
             else f"{kind}_pm{pm:.4g}"
         )
         return _mut
-    if kind == "ssga_n1n2n3":
-        # Yang & Jat 2011 mutation: pick one of {N1, N2, N3} uniformly
-        # at random and apply ONE move from that neighborhood. Lives in
-        # ga.features so the SSGA-specific imports stay there. Keep its
-        # __name__ unchanged so smoke-test feature-coverage discovery
-        # can match it back to the public function.
-        from ga import features as feat
-        return feat.mutate_ssga_n1n2n3
-    if kind in ("move_event", "swap_event"):
-        # Discrete-integer mutation for assignment-style encodings (UCTP).
-        #   move_event: with prob `pm` per gene, redraw uniformly from
-        #               {lb_i .. ub_i}.
-        #   swap_event: with prob `pm` per gene, swap with a random other
-        #               gene's value (so the move budget is symmetric).
-        # `alt` mixes the two operators 50/50 per call, mirroring how
-        # swap/inversion are mixed for permutations.
-        pm = float(spec.get("pm", 1.0 / dim))
-        alt = spec.get("alt")
-        _DISC_OPS = ("move_event", "swap_event")
-        if alt is not None and alt not in _DISC_OPS:
-            raise ValueError(f"unknown alt mutation kind: {alt!r}")
-
-        def _apply_move(seq, rng, ctx):
-            lo = np.asarray(ctx["lb"], dtype=np.int64)
-            hi = np.asarray(ctx["ub"], dtype=np.int64)
-            for i in range(len(seq)):
-                if rng.random() < pm:
-                    seq[i] = int(rng.integers(lo[i], hi[i] + 1))
-            return seq
-
-        def _apply_swap_event(seq, rng, ctx):
-            n = len(seq)
-            for i in range(n):
-                if rng.random() < pm:
-                    j = int(rng.integers(0, n))
-                    seq[i], seq[j] = seq[j], seq[i]
-            return seq
-
-        _OP_FNS = {"move_event": _apply_move, "swap_event": _apply_swap_event}
-        primary_fn = _OP_FNS[kind]
-        alt_fn = _OP_FNS[alt] if alt is not None else None
-
-        def _mut(ind, ctx):
-            seq = [int(v) for v in ind]
-            rng = ctx["rng"]
-            op = primary_fn
-            if alt_fn is not None and rng.random() < 0.5:
-                op = alt_fn
-            return op(seq, rng, ctx)
-
-        _mut.__name__ = (
-            f"{kind}_or_{alt}_pm{pm:.4g}" if alt is not None
-            else f"{kind}_pm{pm:.4g}"
-        )
-        return _mut
     raise ValueError(f"unknown mutation kind: {kind!r}")
 
 
 def make_replace(spec):
-    """Build a replacement closure from a spec like {'k':1} or
-    {'kind': 'worst'}.
+    """Build a replacement closure from a spec like {'k':1}.
 
-    Default kind is generational k-elitism (`kind='elitism'`). Set
-    `kind: "worst"` for the Yang & Jat 2011 SSGA replacement (drop the
-    worst |offspring| members, append offspring).
+    The only kind is generational k-elitism (`kind='elitism'`).
 
     The SGA core populates `ctx['elitism_k']` from
     `FeatureConfig.elitism_k`, so the spec's `k` is effectively the
     *initial* value carried by the baseline FeatureConfig.
     """
     kind = spec.get("kind", "elitism")
-    if kind == "worst":
-        from ga import features as feat
-        return feat.replace_worst
+    if kind != "elitism":
+        raise ValueError(f"unknown replace kind: {kind!r}")
     k_default = int(spec.get("k", 1))
     def _replace(parents, offspring, ctx):
         return generational_elitism(parents, offspring, int(ctx["elitism_k"]))
     _replace.__name__ = f"generational_elitism_k{k_default}"
     return _replace
-
-
-def make_refine(spec):
-    """Build a refine_fn closure from a spec like
-    {'kind': 'ls1', 's_max': 20}.
-
-    Returns `None` if `spec` is `None`. The 'ls1' kind constructs Yang &
-    Jat 2011 LS1 (Algorithm 2) over neighborhoods N1+N2 with first-
-    improvement acceptance — see `ga.features.make_refine_ls1`.
-    """
-    if spec is None:
-        return None
-    kind = spec.get("kind")
-    if kind is None:
-        return None
-    if kind == "ls1":
-        from ga import features as feat
-        return feat.make_refine_ls1(s_max=int(spec.get("s_max", 20)))
-    raise ValueError(f"unknown refine kind: {kind!r}")
 
 
 # ===================== EVOLUTION LOOP =====================
@@ -512,12 +387,6 @@ def run_sga(
     Returns:
         result: dict with best_fitness, best_solution, fes_used, history
     """
-    # F46: dispatch to island co-evolution when configured
-    if getattr(config, "n_islands", 1) > 1:
-        return run_sga_islands(
-            problem, config, pop_size=pop_size, max_fes=max_fes,
-            seed=seed, record_history=record_history,
-        )
     rng = np.random.default_rng(seed)
     random.seed(seed)  # DEAP's selection helpers use Python's `random`
 
@@ -649,7 +518,6 @@ def run_sga(
 
         # ---- Mutation (track which were mutated and pre-mutation vector) ----
         mut_was_applied = [False] * len(offspring)
-        pre_mut_vecs = [list(o) for o in offspring]
         for i, ind in enumerate(offspring):
             if rng.random() < config.mut_prob:
                 m = mutate_fn(ind, ctx)
@@ -787,529 +655,3 @@ def run_sga(
         "fes_used": eval_counter[0],
         "history": history,
     }
-
-
-# ===================== F46: ISLAND CO-EVOLUTION =====================
-
-def run_sga_islands(problem, config, pop_size=50, max_fes=None, seed=0,
-                    record_history=True):
-    """K isolated sub-populations evolve in parallel; best individuals
-    migrate every `config.migration_interval` generations.
-
-    To stay close to the single-pop loop without duplicating its full
-    instrumentation, each island holds its own panmictic SGA state and
-    advances one generation at a time. Selection/crossover/mutation never
-    cross island boundaries between migrations.
-    """
-    rng = np.random.default_rng(seed)
-    random.seed(seed)
-
-    dim = problem.ndim
-    lb = np.asarray(problem.lb, dtype=float)
-    ub = np.asarray(problem.ub, dtype=float)
-    if max_fes is None:
-        _CEC2022_MAXFES = {10: 200_000, 20: 1_000_000}
-        if dim not in _CEC2022_MAXFES:
-            raise ValueError(
-                f"CEC2022 MaxFES is defined only for dim 10 and 20; "
-                f"got dim={dim}. Pass max_fes explicitly to override."
-            )
-        max_fes = _CEC2022_MAXFES[dim]
-
-    K = max(1, config.n_islands)
-    island_pop_sizes = [pop_size // K] * K
-    for i in range(pop_size - sum(island_pop_sizes)):
-        island_pop_sizes[i] += 1
-
-    init_fn = config.init_fn or default_init
-    select_fn = config.select_fn or default_select
-    crossover_fn = config.crossover_fn or default_crossover
-    mutate_fn = config.mutate_fn or default_mutate
-    replace_fn = config.replace_fn or default_replace
-    evaluate_fn = problem.evaluate
-    eval_counter = [0]
-
-    # Per-island state
-    islands = []
-    for k in range(K):
-        ctx = {
-            "rng": rng, "lb": lb, "ub": ub, "dim": dim,
-            "pop_size": island_pop_sizes[k], "max_fes": max_fes,
-            "elitism_k": config.elitism_k,
-            "gen": 0,
-            "max_gen_estimate": max_fes // max(pop_size, 1),
-            "best_so_far": None,
-            "stagnation_counter": 0,
-            "last_best_fitness": np.inf,
-            "_population": [],
-            "archive": deque(maxlen=config.archive_size),
-            "shade_memory": {
-                "F":  deque([0.5] * 5, maxlen=10),
-                "CR": deque([0.5] * 5, maxlen=10),
-            },
-            "t_ratio": 0.0,
-            "hho_energy": 1.0,
-            "config": config,
-            "bound_handling": getattr(config, "bound_handling", "clip"),
-            "island_id": k,
-            "evaluate_fn": problem.evaluate,
-            "eval_counter": eval_counter,
-            "problem": problem,
-        }
-        init_vectors = init_fn(island_pop_sizes[k], dim, lb, ub, ctx)
-        pop = [make_individual(apply_bounds(v, lb, ub, mode=ctx["bound_handling"], rng=rng)) for v in init_vectors]
-        evaluate_population(pop, evaluate_fn, eval_counter)
-        islands.append({"pop": pop, "ctx": ctx})
-
-    # Global best across all islands
-    all_inds = [ind for isl in islands for ind in isl["pop"]]
-    best = creator.Individual(list(min(all_inds, key=lambda x: x.fitness.values[0])))
-    best.fitness.values = min(all_inds, key=lambda x: x.fitness.values[0]).fitness.values
-
-    history = []
-    gen = 0
-    while eval_counter[0] < max_fes:
-        gen += 1
-        for isl in islands:
-            ctx = isl["ctx"]
-            pop = isl["pop"]
-            ctx["gen"] = gen
-            ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
-            ctx["hho_energy"] = 2.0 * (rng.random() * 2 - 1) * (1.0 - ctx["t_ratio"])
-            ctx["_population"] = list(pop)
-            for _ind in pop:
-                _ind.age = getattr(_ind, "age", 0) + 1
-
-            raw_parents = select_fn(pop, len(pop), ctx)
-            parents = []
-            for src in raw_parents:
-                new_p = creator.Individual(list(src))
-                if src.fitness.valid:
-                    new_p.fitness.values = src.fitness.values
-                parents.append(new_p)
-
-            offspring = []
-            for i in range(0, len(parents) - 1, 2):
-                p1, p2 = parents[i], parents[i + 1]
-                if rng.random() < config.cx_prob:
-                    c1, c2 = crossover_fn(p1, p2, ctx)
-                else:
-                    c1, c2 = list(p1), list(p2)
-                offspring.append(make_individual(apply_bounds(c1, lb, ub, mode=ctx["bound_handling"], rng=rng)))
-                offspring.append(make_individual(apply_bounds(c2, lb, ub, mode=ctx["bound_handling"], rng=rng)))
-
-            for i, ind in enumerate(offspring):
-                if rng.random() < config.mut_prob:
-                    m = mutate_fn(ind, ctx)
-                    offspring[i] = make_individual(apply_bounds(m, lb, ub, mode=ctx["bound_handling"], rng=rng))
-
-            for ind in offspring:
-                if eval_counter[0] >= max_fes:
-                    break
-                if not ind.fitness.valid:
-                    f = evaluate_fn(np.asarray(ind))
-                    ind.fitness.values = (float(f),)
-                    eval_counter[0] += 1
-            offspring = [o for o in offspring if o.fitness.valid]
-            if not offspring:
-                continue
-
-            isl["pop"] = replace_fn(pop, offspring, ctx)
-            for ind in isl["pop"]:
-                if not ind.fitness.valid and eval_counter[0] < max_fes:
-                    f = evaluate_fn(np.asarray(ind))
-                    ind.fitness.values = (float(f),)
-                    eval_counter[0] += 1
-            isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
-            if not isl["pop"]:
-                continue
-
-            if config.diversity_fn is not None:
-                isl["pop"] = config.diversity_fn(isl["pop"], ctx)
-                for ind in isl["pop"]:
-                    if not ind.fitness.valid and eval_counter[0] < max_fes:
-                        f = evaluate_fn(np.asarray(ind))
-                        ind.fitness.values = (float(f),)
-                        eval_counter[0] += 1
-                isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
-                if not isl["pop"]:
-                    continue
-
-            if config.refine_fn is not None:
-                isl["pop"] = config.refine_fn(isl["pop"], ctx)
-                for ind in isl["pop"]:
-                    if not ind.fitness.valid and eval_counter[0] < max_fes:
-                        f = evaluate_fn(np.asarray(ind))
-                        ind.fitness.values = (float(f),)
-                        eval_counter[0] += 1
-                isl["pop"] = [ind for ind in isl["pop"] if ind.fitness.valid]
-                if not isl["pop"]:
-                    continue
-
-            cur_best = min(isl["pop"], key=lambda x: x.fitness.values[0])
-            if cur_best.fitness.values[0] < best.fitness.values[0]:
-                best = creator.Individual(list(cur_best))
-                best.fitness.values = cur_best.fitness.values
-                ctx["stagnation_counter"] = 0
-                archived = creator.Individual(list(best))
-                archived.fitness.values = best.fitness.values
-                ctx["archive"].append(archived)
-            else:
-                ctx["stagnation_counter"] += 1
-
-        # Migration: send each island's best to the next island, replace its worst
-        if K > 1 and gen % max(1, config.migration_interval) == 0:
-            best_per_island = [
-                min(isl["pop"], key=lambda x: x.fitness.values[0])
-                for isl in islands
-            ]
-            for k in range(K):
-                src = best_per_island[k]
-                dst_isl = islands[(k + 1) % K]["pop"]
-                worst_idx = max(range(len(dst_isl)),
-                                key=lambda i: dst_isl[i].fitness.values[0])
-                migrant = creator.Individual(list(src))
-                migrant.fitness.values = src.fitness.values
-                dst_isl[worst_idx] = migrant
-
-        if record_history:
-            all_inds = [ind for isl in islands for ind in isl["pop"]]
-            fitnesses = np.array([ind.fitness.values[0] for ind in all_inds])
-            positions = np.array([list(ind) for ind in all_inds])
-            diversity_std = float(np.mean(np.std(positions, axis=0))) if len(positions) else 0.0
-            hussain_div = _hussain_diversity(positions) if len(positions) else 0.0
-            history.append({
-                "gen": gen,
-                "fes": eval_counter[0],
-                "best_fitness": float(best.fitness.values[0]),
-                "mean_fitness": float(fitnesses.mean()) if len(fitnesses) else float("inf"),
-                "diversity": diversity_std,
-                "hussain_div": hussain_div,
-                "xpl_pct": 0.0, "xpt_pct": 0.0,
-                "stagnation_count": 0,
-                "mut_success_rate": 0.0, "cx_success_rate": 0.0,
-                "mean_step_size": 0.0, "selection_pressure": 0.0,
-            })
-
-    error = float(best.fitness.values[0]) - float(problem.f_global)
-    if error < 1e-8:
-        error = 0.0
-    return {
-        "variant": config.name,
-        "seed": seed,
-        "best_fitness": float(best.fitness.values[0]),
-        "error": error,
-        "best_solution": list(best),
-        "fes_used": eval_counter[0],
-        "history": history,
-    }
-
-
-# ===================== STEADY-STATE GA (Yang & Jat 2011 SSGA) =====================
-
-def run_ssga(
-    problem,
-    config: FeatureConfig,
-    pop_size=50,
-    max_fes=None,
-    seed=0,
-    record_history=True,
-):
-    """One independent trial of a Yang & Jat 2011-style steady-state GA.
-
-    Algorithm 1 of the paper:
-      1. Initialize a population of `pop_size` solutions.
-      2. Evaluate each; apply LS1 to each.
-      3. Repeat until the FE budget is exhausted:
-           - tournament-select two parents,
-           - crossover (probability `cx_prob`) -> one child,
-           - mutation (probability `mut_prob`),
-           - LS1 on the child,
-           - replace the worst pop member with the child.
-
-    LS1 (Algorithm 2) is invoked via `ga.features._ls1_apply`. It does
-    many delta-style evaluations internally; per the paper's footnote 2,
-    those do NOT count against the FE budget. Each pre-LS1 evaluation of
-    a fresh individual costs 1 FE.
-
-    Returns the same dict shape as `run_sga` so the recorder / analysis
-    pipeline consume it unchanged.
-    """
-    from ga import features as feat  # localized to avoid module import cycle
-
-    rng = np.random.default_rng(seed)
-    random.seed(seed)
-
-    dim = problem.ndim
-    lb = np.asarray(problem.lb, dtype=float)
-    ub = np.asarray(problem.ub, dtype=float)
-
-    if max_fes is None:
-        raise ValueError(
-            "run_ssga requires an explicit max_fes (steady-state has no "
-            "natural per-suite default; pass --max-fes or set it in the "
-            "suite JSON)."
-        )
-
-    ctx = {
-        "rng": rng, "lb": lb, "ub": ub, "dim": dim,
-        "pop_size": pop_size, "max_fes": max_fes,
-        "elitism_k": config.elitism_k,
-        "gen": 0, "max_gen_estimate": max(max_fes - pop_size, 1),
-        "best_so_far": None,
-        "stagnation_counter": 0,
-        "last_best_fitness": np.inf,
-        "_population": [],
-        "archive": deque(maxlen=config.archive_size),
-        "shade_memory": {
-            "F":  deque([0.5] * 5, maxlen=10),
-            "CR": deque([0.5] * 5, maxlen=10),
-        },
-        "t_ratio": 0.0,
-        "hho_energy": 1.0,
-        "config": config,
-        "bound_handling": getattr(config, "bound_handling", "passthrough"),
-        "evaluate_fn": problem.evaluate,
-        "eval_counter": [0],
-        "problem": problem,
-    }
-
-    init_fn = config.init_fn or default_init
-    select_fn = config.select_fn or default_select
-    crossover_fn = config.crossover_fn or default_crossover
-    mutate_fn = config.mutate_fn or default_mutate
-    replace_fn = config.replace_fn or feat.replace_worst
-
-    s_max = int(getattr(config, "refine_s_max", 20))
-    eval_counter = ctx["eval_counter"]
-
-    if not hasattr(problem, "evaluate_full"):
-        raise TypeError(
-            f"run_ssga requires the problem to expose `evaluate_full` "
-            f"and `assign_rooms` (got {type(problem).__name__}). "
-            f"Use run_sga for problems without that interface."
-        )
-
-    # ---- Initialization with LS1 on each member -----------------------
-    init_vectors = init_fn(pop_size, dim, lb, ub, ctx)
-    population = []
-    for v in init_vectors:
-        if eval_counter[0] >= max_fes:
-            break
-        x = list(v)
-        _f, hcv, scv, rooms = problem.evaluate_full(x)
-        eval_counter[0] += 1
-        x, rooms, hcv, scv, fitness = feat._ls1_apply(
-            problem, x, rooms, hcv, scv, s_max, rng,
-        )
-        ind = make_individual(x)
-        ind.fitness.values = (float(fitness),)
-        population.append(ind)
-
-    if not population:
-        # Budget too small for any init; return a degenerate result so the
-        # recorder still records something rather than crashing.
-        return {
-            "variant": config.name,
-            "seed": seed,
-            "best_fitness": float("inf"),
-            "error": float("inf"),
-            "best_solution": [],
-            "fes_used": eval_counter[0],
-            "history": [],
-        }
-
-    best = creator.Individual(list(min(population, key=lambda x: x.fitness.values[0])))
-    best.fitness.values = min(population, key=lambda x: x.fitness.values[0]).fitness.values
-    ctx["best_so_far"] = best
-
-    history = []
-    div_max_so_far = 0.0
-    gen = 0
-
-    while eval_counter[0] < max_fes:
-        gen += 1
-        ctx["gen"] = gen
-        ctx["t_ratio"] = min(1.0, gen / max(ctx["max_gen_estimate"], 1))
-        ctx["_population"] = list(population)
-
-        # ---- Selection: two parents via tournament ----
-        # Capture pre-/post-selection fitness for Mühlenbein selection
-        # intensity (same metric as run_sga; stored under the legacy column
-        # name `selection_pressure`).
-        pre_select_fits = np.array(
-            [ind.fitness.values[0] if ind.fitness.valid else float("inf")
-             for ind in population]
-        )
-        raw_parents = select_fn(population, 2, ctx)
-        parents = []
-        for p in raw_parents:
-            np_ind = creator.Individual(list(p))
-            try:
-                if p.fitness.valid:
-                    np_ind.fitness.values = p.fitness.values
-            except Exception:
-                pass
-            parents.append(np_ind)
-        # selTournament may return fewer than 2 on tiny populations
-        while len(parents) < 2:
-            parents.append(creator.Individual(list(population[0])))
-            parents[-1].fitness.values = population[0].fitness.values
-        p1, p2 = parents[0], parents[1]
-        post_select_fits = np.array(
-            [ind.fitness.values[0] if ind.fitness.valid else float("inf")
-             for ind in parents]
-        )
-        pre_std = float(np.std(pre_select_fits))
-        if pre_std > 1e-30 and np.all(np.isfinite(post_select_fits)):
-            selection_pressure = float(
-                abs(np.mean(post_select_fits) - np.mean(pre_select_fits))
-                / pre_std
-            )
-        else:
-            selection_pressure = 0.0
-
-        # ---- Crossover (one child per generation per Algorithm 1) ----
-        cx_applied = False
-        if rng.random() < config.cx_prob:
-            c1, _c2 = crossover_fn(p1, p2, ctx)
-            child_vec = list(c1)
-            cx_applied = True
-        else:
-            child_vec = list(p1)
-
-        # ---- Mutation ----
-        mut_applied = False
-        if rng.random() < config.mut_prob:
-            child_vec = mutate_fn(child_vec, ctx)
-            mut_applied = True
-
-        # ---- Evaluate + LS1 (1 FE for the pre-LS1 full eval) ----
-        if eval_counter[0] >= max_fes:
-            break
-        _f, hcv, scv, rooms = problem.evaluate_full(child_vec)
-        eval_counter[0] += 1
-        child_vec, rooms, hcv, scv, fitness = feat._ls1_apply(
-            problem, child_vec, rooms, hcv, scv, s_max, rng,
-        )
-        child = make_individual(child_vec)
-        child.fitness.values = (float(fitness),)
-
-        # ---- Replacement: drop worst, append child ----
-        prev_size = len(population)
-        population = replace_fn(population, [child], ctx)
-        if len(population) == 0:
-            break
-        # Replace_fn MUST preserve population size for SSGA. Diversity
-        # injection can resize later; the replace slot itself cannot.
-        if len(population) != prev_size:
-            raise RuntimeError(
-                f"SSGA replace_fn {getattr(replace_fn, '__name__', replace_fn)!r} "
-                f"changed population size: {prev_size} -> {len(population)}. "
-                "Steady-state replace must return exactly len(parents) "
-                "individuals (replace_worst, replace_greedy, replace_metropolis, "
-                "and the *_uctp adapters all do this)."
-            )
-
-        # ---- Track best ----
-        cur_best = min(population, key=lambda x: x.fitness.values[0])
-        if cur_best.fitness.values[0] < best.fitness.values[0]:
-            best = creator.Individual(list(cur_best))
-            best.fitness.values = cur_best.fitness.values
-            ctx["best_so_far"] = best
-            ctx["stagnation_counter"] = 0
-            archived = creator.Individual(list(best))
-            archived.fitness.values = best.fitness.values
-            ctx["archive"].append(archived)
-        else:
-            ctx["stagnation_counter"] += 1
-
-        # ---- Optional diversity injection (UCTP variants) ----
-        # Mirrors run_sga's hook. Fresh individuals come in with invalid
-        # fitness; evaluate them via evaluate_full + LS1 like the init path.
-        if config.diversity_fn is not None:
-            population = config.diversity_fn(population, ctx)
-            for i, ind in enumerate(population):
-                if ind.fitness.valid:
-                    continue
-                if eval_counter[0] >= max_fes:
-                    break
-                vec = list(ind)
-                _f, hcv, scv, rooms = problem.evaluate_full(vec)
-                eval_counter[0] += 1
-                vec, rooms, hcv, scv, fitness = feat._ls1_apply(
-                    problem, vec, rooms, hcv, scv, s_max, rng,
-                )
-                new_ind = make_individual(vec)
-                new_ind.fitness.values = (float(fitness),)
-                population[i] = new_ind
-            population = [ind for ind in population if ind.fitness.valid]
-            if not population:
-                break
-
-        if record_history:
-            # Per-gen operator metrics (single child / single trial). Compared
-            # against post-LS1 parent fitness — the comparison reflects whether
-            # the (cx/mut + LS1) pipeline beat the parent rather than the raw
-            # operator in isolation, since LS1 is intrinsic to SSGA's design.
-            child_fit = float(child.fitness.values[0])
-            p1_fit = float(p1.fitness.values[0]) if p1.fitness.valid else float("inf")
-            p2_fit = float(p2.fitness.values[0]) if p2.fitness.valid else float("inf")
-            mut_success_rate = 1.0 if (mut_applied and child_fit < p1_fit) else 0.0
-            cx_success_rate = (
-                1.0 if (cx_applied and child_fit < min(p1_fit, p2_fit)) else 0.0
-            )
-            mean_step_size = float(np.linalg.norm(
-                np.asarray(child, dtype=float) - np.asarray(p1, dtype=float)
-            ))
-
-            fitnesses = np.array([ind.fitness.values[0] for ind in population])
-            positions = np.array([list(ind) for ind in population], dtype=float)
-            diversity_std = float(np.mean(np.std(positions, axis=0)))
-            hussain_div = _hussain_diversity(positions)
-            div_max_so_far = max(div_max_so_far, hussain_div)
-            xpl_pct = 100.0 * hussain_div / div_max_so_far if div_max_so_far > 0 else 0.0
-            history.append({
-                "gen": gen,
-                "fes": eval_counter[0],
-                "best_fitness": float(best.fitness.values[0]),
-                "mean_fitness": float(fitnesses.mean()),
-                "diversity": diversity_std,
-                "hussain_div": hussain_div,
-                "xpl_pct": xpl_pct,
-                "xpt_pct": 100.0 - xpl_pct,
-                "stagnation_count": int(ctx["stagnation_counter"]),
-                "mut_success_rate": mut_success_rate,
-                "cx_success_rate": cx_success_rate,
-                "mean_step_size": mean_step_size,
-                "selection_pressure": (
-                    selection_pressure if np.isfinite(selection_pressure) else 0.0
-                ),
-            })
-
-    error = float(best.fitness.values[0]) - float(problem.f_global)
-    if error < 1e-8:
-        error = 0.0
-
-    return {
-        "variant": config.name,
-        "seed": seed,
-        "best_fitness": float(best.fitness.values[0]),
-        "error": error,
-        "best_solution": list(best),
-        "fes_used": eval_counter[0],
-        "history": history,
-    }
-
-
-def run_trial(problem, config, pop_size=50, max_fes=None, seed=0,
-              record_history=True):
-    """Dispatch by `config.loop_kind`: 'generational' -> run_sga,
-    'steady_state' -> run_ssga. Used by the run protocols so the suite
-    JSON's `loop` field selects the right loop without runner changes."""
-    loop_kind = getattr(config, "loop_kind", "generational")
-    if loop_kind == "steady_state":
-        return run_ssga(problem, config, pop_size=pop_size, max_fes=max_fes,
-                        seed=seed, record_history=record_history)
-    return run_sga(problem, config, pop_size=pop_size, max_fes=max_fes,
-                   seed=seed, record_history=record_history)

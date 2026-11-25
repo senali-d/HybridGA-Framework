@@ -2,7 +2,7 @@
 Construct SGA baselines and variants from a per-suite JSON config.
 
 The config is the single source of truth for the SGA spec of a problem
-family (CEC 2022, engineering, TSP, timetabling, ...). A variant is a
+family (CEC 2022, CEC 2020 engineering, TSP). A variant is a
 *minimal declaration*: it names the operator slot(s) it changes, and
 optionally lists explicit per-variant overrides for scalar knobs. Anything
 not declared is inherited bit-identical from the suite's baseline.
@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from ga.core import (
     FeatureConfig,
     make_init, make_select, make_crossover, make_mutation, make_replace,
-    make_refine,
 )
 
 
@@ -29,7 +28,7 @@ from ga.core import (
 # Spec.overrides. Anything outside this set is inherited from the baseline.
 _OVERRIDABLE_SCALARS = frozenset({
     "cx_prob", "mut_prob", "elitism_k",
-    "n_islands", "migration_interval", "archive_size", "bound_handling",
+    "archive_size", "bound_handling",
     # Pseudo-knobs that the run protocol reads directly (not on FeatureConfig
     # itself but still legitimate per-variant overrides):
     "pop_size", "max_fes", "n_runs",
@@ -103,8 +102,6 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
     # backwards-compatible.
     repl_spec = suite_cfg.get("replace") or suite_cfg.get("elitism", {"k": 1})
     elt_spec  = suite_cfg.get("elitism",   {"k": 1})
-    refine_spec = suite_cfg.get("refine")  # optional; e.g. {"kind":"ls1","s_max":20}
-    loop_kind = suite_cfg.get("loop", "generational")
 
     cfg = FeatureConfig(
         name=f"SGA_baseline_{suite_cfg.get('suite', 'unknown')}",
@@ -113,24 +110,15 @@ def baseline_from_config(suite_cfg: dict, dim: int) -> FeatureConfig:
         crossover_fn=make_crossover(cx_spec),
         mutate_fn=make_mutation(mut_spec, dim=dim),
         replace_fn=make_replace(repl_spec),
-        refine_fn=make_refine(refine_spec),
         bound_handling=suite_cfg.get("bound_handling", "clip"),
         cx_prob=float(cx_spec.get("pc", 0.9)),
         # Per-individual mutation gate. Operator semantics (per-gene poly
         # rate, per-position swap rate, whole-vector inversion rate) live
         # inside the mutation closure built by `make_mutation`. The gate
         # therefore defaults to 1.0 and only diverges if the JSON sets
-        # `mutation.pm_per_individual` explicitly. The UCTP SSGA reads
-        # `mutation.pm` as a per-individual probability of triggering one
-        # N1/N2/N3 move; we accept either field name for that semantic.
-        mut_prob=float(mut_spec.get(
-            "pm_per_individual",
-            mut_spec.get("pm", 1.0) if mut_spec.get("kind") == "ssga_n1n2n3"
-            else 1.0,
-        )),
+        # `mutation.pm_per_individual` explicitly.
+        mut_prob=float(mut_spec.get("pm_per_individual", 1.0)),
         elitism_k=int(elt_spec.get("k", 1)),
-        loop_kind=loop_kind,
-        refine_s_max=int((refine_spec or {}).get("s_max", 20)),
     )
     return cfg
 

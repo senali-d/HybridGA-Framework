@@ -8,13 +8,15 @@ each suite's per-function archives into a single results[variant][function]
 dict and calling the framework's own stats functions. Also renders a Nemenyi
 critical-difference diagram per suite with Title-case variant labels.
 
-No GA runs are executed. Reads results/<archive>/runs.parquet (read-only);
-writes only into ./results/<suite>/.
+No GA runs are executed. Reads <results>/<archive>/runs.parquet (read-only)
+for the archive tags listed in SUITES below; writes only into <out>/<suite>/.
 
-Run with the framework venv:
-    <framework>/venv/bin/python run_posthoc.py
+Run from the repository root with the framework venv:
+    python posthoc_analysis/run_posthoc.py \
+        [--results results] [--out posthoc_analysis/results]
 """
 from __future__ import annotations
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -25,10 +27,9 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-PROJ = Path("/Users/senalidilumika/Documents/MCS/Research/Thesis-HybridGA")
-FRAMEWORK = Path("/Users/senalidilumika/Documents/MCS/Research/Repos/HybridGA-Framework")
-RES = PROJ / "results"
 HERE = Path(__file__).resolve().parent
+FRAMEWORK = HERE.parent
+RES = FRAMEWORK / "results"
 OUT = HERE / "results"
 
 sys.path.insert(0, str(FRAMEWORK / "src"))
@@ -144,8 +145,19 @@ def cd_diagram(results: dict, title: str, save_path: Path) -> None:
 
 
 def main() -> None:
+    global RES, OUT
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser.add_argument("--results", type=Path, default=RES,
+                        help="Directory holding the experiment archives "
+                             f"(default: {RES.relative_to(FRAMEWORK)}).")
+    parser.add_argument("--out", type=Path, default=OUT,
+                        help="Output directory "
+                             f"(default: {OUT.relative_to(FRAMEWORK)}).")
+    args = parser.parse_args()
+    RES, OUT = args.results.resolve(), args.out.resolve()
+
     OUT.mkdir(parents=True, exist_ok=True)
-    report = ["# Post-hoc completion — report\n",
+    report = ["# Post-hoc completion - report\n",
               "Suite-level Friedman + Holm + Nemenyi recomputed on existing "
               "`runs.parquet` (no GA runs). Lower Friedman rank = better.\n"]
     summary_rows = []

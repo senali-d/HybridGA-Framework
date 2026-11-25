@@ -121,22 +121,6 @@ def test_tsp_baseline_uses_permutation_operators():
     assert b.init_fn.__name__ == "random_permutation"
 
 
-def test_timetabling_baseline_constructs():
-    """UCTP baseline: Yang & Jat 2011 SSGA — discrete-integer init,
-    slot-uniform crossover, N1/N2/N3 mutation, LS1 refinement,
-    steady-state loop, passthrough bounds."""
-    cfg = _load("uctp")
-    b = baseline_from_config(cfg, dim=100)
-    assert b.init_fn.__name__ == "random_int_vector"
-    assert b.crossover_fn.__name__ == "ssga_uniform_slot"
-    assert b.mutate_fn.__name__ == "mutate_ssga_n1n2n3"
-    assert b.refine_fn is not None
-    assert b.loop_kind == "steady_state"
-    assert b.bound_handling == "passthrough"
-    assert b.cx_prob == 0.8
-    assert b.mut_prob == 0.5
-
-
 def test_variant_diff_reports_replacement_and_wrapper():
     cfg = _load("cec2020_realworld")
     b = baseline_from_config(cfg, dim=4)

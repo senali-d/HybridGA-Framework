@@ -743,6 +743,6 @@ def generate_all(exp_dir, baseline_name: str = "SGA_baseline") -> None:
         plot_operator_success(hist_df, plots_dir)
         plot_fingerprint(hist_df, runs_df, plots_dir)
     else:
-        print(f"[plots] history.parquet missing — skipping convergence/diversity/etc.")
+        print("[plots] history.parquet missing - skipping convergence/diversity/etc.")
 
     print(f"Wrote plots to {plots_dir}")

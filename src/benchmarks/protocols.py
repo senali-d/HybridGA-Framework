@@ -12,18 +12,16 @@ import time
 import cloudpickle
 import numpy as np
 
-from ga.core import run_trial
+from ga.core import run_sga
 from benchmarks.cec2022_functions import CEC2022_FUNCS, CEC2022_DIM_SUPPORTED
 from benchmarks.cec2020_realworld import ENGINEERING_FUNCS
 from benchmarks.tsp import TSPLIB_FUNCS
-from benchmarks.uctp import SOCHA_FUNCS, UCTP_FUNCS
 
 
 _SUITES = {
     "cec2022": dict(CEC2022_FUNCS),
     "cec2020_realworld": dict(ENGINEERING_FUNCS),
     "tsp": dict(TSPLIB_FUNCS),
-    "uctp": dict(UCTP_FUNCS),
 }
 
 
@@ -40,7 +38,7 @@ def _worker_run_one(payload):
     FCls = _SUITES[suite_name][func_name]
     problem = FCls(ndim=kw["dim"])
     t_run = time.time()
-    r = run_trial(
+    r = run_sga(
         problem=problem,
         config=variant,
         pop_size=kw["pop_size"],
@@ -135,7 +133,7 @@ def _run_protocol(suite_name, funcs_registry, dim_supported_map,
                 for seed in range(n_runs):
                     job += 1
                     t_run = time.time()
-                    r = run_trial(
+                    r = run_sga(
                         problem=problem, config=variant, pop_size=pop_size,
                         max_fes=max_fes, seed=seed,
                         record_history=record_history,
@@ -192,23 +190,6 @@ def run_tsp_protocol(variants, dim=None, n_runs=30, max_fes=None,
     return _run_protocol(
         suite_name="tsp",
         funcs_registry=TSPLIB_FUNCS,
-        dim_supported_map=None,
-        variants=variants, dim=(dim if dim is not None else 0),
-        n_runs=n_runs, max_fes=max_fes,
-        pop_size=pop_size, recorder=recorder, record_history=record_history,
-        workers=workers, functions=functions,
-    )
-
-
-def run_uctp_protocol(variants, dim=None, n_runs=30, max_fes=None,
-                      pop_size=50, recorder=None, record_history=True,
-                      workers=1, functions=None):
-    """UCTP instances (Socha 2002 + TTC 2002). Each instance has a fixed
-    event count baked into its `.tim` file, so `dim` is accepted for
-    interface compatibility but ignored by the constructors."""
-    return _run_protocol(
-        suite_name="uctp",
-        funcs_registry=UCTP_FUNCS,
         dim_supported_map=None,
         variants=variants, dim=(dim if dim is not None else 0),
         n_runs=n_runs, max_fes=max_fes,

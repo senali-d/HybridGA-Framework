@@ -97,7 +97,7 @@ def test_perm_variant_preserves_permutation(name):
     permutation of 0..n-1 across a short run."""
     from ga.build import baseline_from_config, variant_from_baseline
     from ga.core import run_sga
-    from ga.variants import VARIANTS, variants_for_encoding
+    from ga.variants import variants_for_encoding
     from benchmarks.tsp import TSPLIB_FUNCS
 
     cfg = json.loads((ROOT / "configs" / "tsp.json").read_text())

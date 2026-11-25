@@ -29,7 +29,6 @@ except (RuntimeError, ValueError):
 # Make src/ importable when running directly
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ga.core import FeatureConfig, default_select
 from ga.build import baseline_from_config, variant_from_baseline, variant_diff
 from ga.variants import VARIANTS, variants_for_encoding
 
@@ -76,10 +75,8 @@ def resolve_max_fes(suite_cfg, dim):
             )
         return table[dim]
     return int(mf)
-from ga import features as feat
 from benchmarks.protocols import (
-    run_protocol, run_cec2020_realworld_protocol,
-    run_tsp_protocol, run_uctp_protocol,
+    run_protocol, run_cec2020_realworld_protocol, run_tsp_protocol,
 )
 from analysis.stats import summarize, write_summary
 from analysis import plots as plot_mod
@@ -120,9 +117,9 @@ def main():
                              "(e.g. DE_mut vs SHADE_mut).")
     parser.add_argument("--workers", type=int, default=1,
                         help="Process-pool workers over (variant, function, "
-                             "seed) tuples. Default 1 (sequential). Uses fork "
-                             "start method, so closures inside variants are "
-                             "fine. Results are seed-deterministic.")
+                             "seed) tuples. Default 1 (sequential). Uses the "
+                             "spawn start method; variants are cloudpickled. "
+                             "Results are seed-deterministic.")
     parser.add_argument("--pop-size", type=int, default=None,
                         help="Population size. Default: 30 (demo) / 50 (full).")
     parser.add_argument("--max-fes", type=int, default=None,
@@ -132,19 +129,16 @@ def main():
                         help="Cap by generations instead of FEs. Sets "
                              "max_fes = max_gen * pop_size. Overrides --max-fes.")
     parser.add_argument("--suite", type=str, default="cec2022",
-                        choices=["cec2022", "cec2020_realworld",
-                                 "tsp", "uctp"],
+                        choices=["cec2022", "cec2020_realworld", "tsp"],
                         help="Benchmark suite. 'cec2022' (12 CEC 2022 "
                              "functions, default), 'cec2020_realworld' "
                              "(5 mechanical-engineering problems from "
                              "CEC 2020-RW; fixed dim, --dim ignored), "
-                             "'tsp' (6 TSPLIB instances), or "
-                             "'uctp' (30 timetabling instances).")
+                             "or 'tsp' (7 TSPLIB instances).")
     parser.add_argument("--functions", type=str, default=None,
                         help="Comma-separated function names to run "
                              "(e.g. F1,F3,F7 for cec2022; WeldedBeam for "
-                             "cec2020_realworld; eil51 for tsp; "
-                             "socha_small1 for uctp). "
+                             "cec2020_realworld; eil51 for tsp). "
                              "Default: all in the suite.")
     parser.add_argument("--n-runs", type=int, default=None,
                         help="Independent seeds per (variant, function). "
@@ -250,7 +244,6 @@ def main():
         "cec2022": run_protocol,
         "cec2020_realworld": run_cec2020_realworld_protocol,
         "tsp": run_tsp_protocol,
-        "uctp": run_uctp_protocol,
     }
     if args.suite not in protocols:
         raise NotImplementedError(
