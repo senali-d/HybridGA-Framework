@@ -8,7 +8,7 @@ optionally lists explicit per-variant overrides for scalar knobs. Anything
 not declared is inherited bit-identical from the suite's baseline.
 
 This makes it impossible for a "mutation-only" variant to silently diverge
-on (say) selection or population size — those would have to appear in the
+on (say) selection or population size - those would have to appear in the
 variant's `Spec.overrides` dict where they are visible to reviewers.
 """
 

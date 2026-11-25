@@ -118,7 +118,7 @@ def plot_convergence(history_df: pd.DataFrame, out_dir: Path,
         ax.set_yscale("symlog", linthresh=1e-8)
         ax.set_xlabel("Function evaluations")
         ax.set_ylabel("Best fitness (so far)")
-        ax.set_title(f"Convergence — {fn}")
+        ax.set_title(f"Convergence - {fn}")
         ax.legend(fontsize=7, loc="best", ncol=2)
         fig.tight_layout()
         fig.savefig(out_combined / f"{fn}_all.png", dpi=150)
@@ -141,7 +141,7 @@ def plot_convergence(history_df: pd.DataFrame, out_dir: Path,
             ax.set_yscale("symlog", linthresh=1e-8)
             ax.set_xlabel("Function evaluations")
             ax.set_ylabel("Best fitness")
-            ax.set_title(f"{fn} — {v}")
+            ax.set_title(f"{fn} - {v}")
             ax.legend(fontsize=8)
             fig.tight_layout()
             fig.savefig(out_individual / f"{fn}_{v}.png", dpi=150)
@@ -164,7 +164,7 @@ def plot_boxplots(runs_df: pd.DataFrame, out_dir: Path) -> None:
         fig, ax = plt.subplots(figsize=(8, 4.5))
         sns.boxplot(data=sub, x="variant", y="error", order=variants, ax=ax)
         ax.set_yscale("symlog", linthresh=1e-8)
-        ax.set_title(f"Final error — {fn}")
+        ax.set_title(f"Final error - {fn}")
         ax.tick_params(axis="x", rotation=30)
         for tick in ax.get_xticklabels():
             tick.set_horizontalalignment("right")
@@ -224,7 +224,7 @@ def plot_diversity(history_df: pd.DataFrame, out_dir: Path) -> None:
                     color=palette[v], lw=1.4)
         ax.set_xlabel("Function evaluations")
         ax.set_ylabel("Population diversity (mean per-dim std)")
-        ax.set_title(f"Diversity — {fn}")
+        ax.set_title(f"Diversity - {fn}")
         ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         fig.savefig(out_dir / f"{fn}_all.png", dpi=150)
@@ -371,7 +371,7 @@ def plot_ecdf_performance(history_df: pd.DataFrame, out_dir: Path,
         if sub.empty:
             continue
         fig, ax = plt.subplots(figsize=(7, 4.5))
-        _ecdf_for(sub, ax, f"Performance profile — {fn}")
+        _ecdf_for(sub, ax, f"Performance profile - {fn}")
         fig.tight_layout()
         fig.savefig(out_dir / f"{fn}_ecdf.png", dpi=150)
         plt.close(fig)
@@ -420,7 +420,7 @@ def plot_stagnation(history_df: pd.DataFrame, out_dir: Path) -> None:
         sns.boxplot(data=sub, x="variant", y="gap", ax=ax, order=variants)
         ax.set_yscale("log")
         ax.set_ylabel("Generations between improvements")
-        ax.set_title(f"Stagnation gap — {fn}")
+        ax.set_title(f"Stagnation gap - {fn}")
         ax.tick_params(axis="x", rotation=30)
         for tick in ax.get_xticklabels():
             tick.set_horizontalalignment("right")
@@ -481,7 +481,7 @@ def plot_phase(history_df: pd.DataFrame, out_dir: Path) -> None:
         if sub.empty:
             continue
         _draw_panels(sub,
-                     f"Exploration ↔ Exploitation phase — {fn}",
+                     f"Exploration ↔ Exploitation phase - {fn}",
                      out_dir / f"{fn}_phase.png")
 
 
@@ -516,7 +516,7 @@ def plot_xpl_xpt(history_df: pd.DataFrame, out_dir: Path) -> None:
         ax.set_xlabel("Function evaluations")
         ax.set_ylabel("XPL% (exploration)")
         ax.set_ylim(0, 105)
-        ax.set_title(f"Exploration vs Exploitation — {fn}")
+        ax.set_title(f"Exploration vs Exploitation - {fn}")
         ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         fig.savefig(out_dir / f"{fn}_xpl.png", dpi=150)
@@ -557,7 +557,7 @@ def plot_step_size(history_df: pd.DataFrame, out_dir: Path) -> None:
         sns.boxplot(data=sub, x="variant", y="mean_step_size",
                     order=variants, ax=ax)
         ax.set_yscale("symlog", linthresh=1e-3)
-        ax.set_title(f"Step size distribution — {fn}")
+        ax.set_title(f"Step size distribution - {fn}")
         ax.tick_params(axis="x", rotation=30)
         for tick in ax.get_xticklabels():
             tick.set_horizontalalignment("right")
@@ -586,7 +586,7 @@ def plot_step_size(history_df: pd.DataFrame, out_dir: Path) -> None:
         ax.set_yscale("symlog", linthresh=1e-3)
         ax.set_xlabel("Function evaluations")
         ax.set_ylabel("Mean step size")
-        ax.set_title(f"Step size vs FEs — {fn}")
+        ax.set_title(f"Step size vs FEs - {fn}")
         ax.legend(fontsize=7, ncol=2)
         fig.tight_layout()
         fig.savefig(out_dir / f"{fn}_curve.png", dpi=150)
@@ -628,7 +628,7 @@ def plot_operator_success(history_df: pd.DataFrame, out_dir: Path) -> None:
         for ax, col, title in zip(axes, ["mut_success_rate", "cx_success_rate"],
                                   ["Mutation success", "Crossover success"]):
             sns.boxplot(data=sub, x="variant", y=col, order=variants, ax=ax)
-            ax.set_title(f"{title} — {fn}")
+            ax.set_title(f"{title} - {fn}")
             ax.set_ylabel("Fraction improving")
             ax.tick_params(axis="x", rotation=30)
             for tick in ax.get_xticklabels():
@@ -657,7 +657,7 @@ def plot_operator_success(history_df: pd.DataFrame, out_dir: Path) -> None:
                 ])
                 ax.plot(fes_grid, curves.mean(axis=0), label=v,
                         color=palette[v], lw=1.3)
-            ax.set_title(f"{title} — {fn}")
+            ax.set_title(f"{title} - {fn}")
             ax.set_xlabel("Function evaluations")
             ax.set_ylim(-0.02, 1.02)
         axes[0].set_ylabel("Fraction improving")
@@ -721,7 +721,7 @@ def generate_all(exp_dir, baseline_name: str = "SGA_baseline") -> None:
     runs_path = exp_dir / "runs.parquet"
     hist_path = exp_dir / "history.parquet"
     if not runs_path.exists():
-        raise FileNotFoundError(f"{runs_path} missing — run experiments first")
+        raise FileNotFoundError(f"{runs_path} missing - run experiments first")
 
     runs_df = pd.read_parquet(runs_path)
     plots_dir = _ensure(exp_dir / "plots")

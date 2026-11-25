@@ -124,7 +124,7 @@ def make_shade_de():
         if not np.any(cross_mask):
             cross_mask[rng.integers(0, ctx["dim"])] = True
         u = np.where(cross_mask, v, x)
-        # Record assumed-success — strict SHADE records only on improvement
+        # Record assumed-success - strict SHADE records only on improvement
         mem["F"].append(F); mem["CR"].append(CR)
         return np.clip(u, lb, ub).tolist()
     return mutate_shade
@@ -352,7 +352,7 @@ def make_abc_scout(limit=None):
     incremented whenever it survives a generation without being improved on
     by its slot's offspring; reset to 0 on improvement. Once `trial > limit`
     the individual is abandoned and replaced by a uniform random scout (with
-    invalid fitness — the core's post-replace eval loop charges the FE).
+    invalid fitness - the core's post-replace eval loop charges the FE).
 
     `limit` defaults to `pop_size * dim` per Karaboga's canonical heuristic.
     """
@@ -411,8 +411,8 @@ def make_bfo_chemotaxis(step_size_frac=0.05):
 
     Each bacterium keeps a persistent unit direction `ind.bfo_dir` and the
     fitness it observed last time it was perturbed (`ind.bfo_prev_fitness`).
-    If the most-recent step improved fitness, *swim* — take another step in
-    the same direction. Otherwise *tumble* — sample a new uniform random
+    If the most-recent step improved fitness, *swim* - take another step in
+    the same direction. Otherwise *tumble* - sample a new uniform random
     unit direction first, then step. First call (no state) tumbles.
 
     Step magnitude = `step_size_frac * (ub - lb)`.
@@ -442,7 +442,7 @@ def make_bfo_chemotaxis(step_size_frac=0.05):
         new_x = np.clip(x + step, lb, ub)
         # Stash state on the *new* individual via ctx side-channel: the core
         # rebuilds the Individual after bound-handling, so we attach attrs to
-        # the list we return — but the core wraps with make_individual which
+        # the list we return - but the core wraps with make_individual which
         # only sets age. Instead, store keyed by id(ind) on ctx and migrate
         # at next call: pragmatic since BFO state is robust to slot churn.
         # Simpler: write directly to ind so future generations carrying the
@@ -619,7 +619,7 @@ def crossover_bbo(p1, p2, ctx):
     For each gene of each child: with prob λ_self, replace with the same gene
     from a population member chosen by roulette on μ. Otherwise keep self.
     Children are migrants (no blended pair). Rates are per-individual, not
-    per-pair — the BBO distinction emphasized in the user's request.
+    per-pair, which is what distinguishes BBO from a blended crossover.
     """
     rng = ctx["rng"]
     pop = ctx.get("_population", [])
@@ -654,7 +654,7 @@ def crossover_bbo(p1, p2, ctx):
 
     # Find each parent's rank within the population (by closest match);
     # parents passed in are clones of population members, so id() comparison
-    # is unreliable across the parent-clone step in core.py — use a value-
+    # is unreliable across the parent-clone step in core.py - use a value-
     # based nearest lookup, which is exact for clones produced by the core.
     def _rank_of(parent_vec):
         pv = np.asarray(parent_vec, dtype=float)
@@ -1445,7 +1445,7 @@ def make_de_perm(F=0.5):
         # injecting F * |donor| of them into r1 without a filter is closer
         # to randomisation than to "differential exploration". An improving-
         # only 2-opt acceptance (Onwubolu & Davendra 2009 style) preserves
-        # the DE metaphor — direction = donor edges, scale = F — while
+        # the DE metaphor - direction = donor edges, scale = F - while
         # restricting acceptance to TSP-meaningful moves.
         D = None
         try:

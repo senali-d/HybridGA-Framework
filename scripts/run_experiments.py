@@ -155,7 +155,7 @@ def main():
         )
 
     if not args.full:
-        # Demo overlays — keep existing operator spec from JSON, just shrink
+        # Demo overlays - keep existing operator spec from JSON, just shrink
         # pop/FE/runs so the smoke run is fast.
         suite_cfg["pop_size"] = 30
         suite_cfg["max_fes"] = 5_000

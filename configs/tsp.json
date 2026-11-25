@@ -9,7 +9,7 @@
   "init":      {"kind": "random_permutation"},
   "selection": {"kind": "tournament", "k": 2},
   "crossover": {"kind": "eax", "pc": 0.9},
-  "_crossover_note": "Edge Assembly Crossover (single-AB-cycle). Replaced OX as the baseline crossover: under an identical GA (perm init, binary tournament, swap/inversion mutation, 1-elitism, pop=100, 50k FEs) EAX beat OX on every instance — e.g. st70 mean tour 707.5 (+4.8%) vs 1802.7 (+167%), Wilcoxon p ≈ 2e-9.",
+  "_crossover_note": "Edge Assembly Crossover (single-AB-cycle). Replaced OX as the baseline crossover: under an identical GA (perm init, binary tournament, swap/inversion mutation, 1-elitism, pop=100, 50k FEs) EAX beat OX on every instance - e.g. st70 mean tour 707.5 (+4.8%) vs 1802.7 (+167%), Wilcoxon p ≈ 2e-9.",
   "mutation":  {"kind": "swap", "pm": 0.02, "alt": "inversion"},
   "elitism": {"k": 1},
   "stopping": "fe_budget",

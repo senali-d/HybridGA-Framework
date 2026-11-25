@@ -38,7 +38,7 @@ def validate_archive_configs(archives: list[Path], strict: bool = True) -> None:
     Wilcoxon is paired by seed index; mismatched dim / FE budget / pop size
     / n_runs invalidate the comparison. Mutation parameters (mut_prob,
     indpb) are FeatureConfig defaults, not CLI args, so they aren't in
-    config.json — we surface git_sha mismatches as a soft warning since
+    config.json - we surface git_sha mismatches as a soft warning since
     a code-level convention change (e.g., mut_prob 0.1 -> 1.0) won't
     show up otherwise.
     """
@@ -46,7 +46,7 @@ def validate_archive_configs(archives: list[Path], strict: bool = True) -> None:
     for arc in archives:
         cfg_path = arc / "config.json"
         if not cfg_path.exists():
-            print(f"[warn] {arc.name}: no config.json — skipping validation")
+            print(f"[warn] {arc.name}: no config.json - skipping validation")
             continue
         with open(cfg_path) as f:
             configs[arc.name] = json.load(f)
@@ -80,7 +80,7 @@ def validate_archive_configs(archives: list[Path], strict: bool = True) -> None:
     shas = {name: cfg.get("git_sha") for name, cfg in configs.items()}
     unique_shas = {s for s in shas.values() if s}
     if len(unique_shas) > 1:
-        print("WARNING: archives produced from different git commits — "
+        print("WARNING: archives produced from different git commits - "
               "code-level changes (e.g., mutation defaults) may differ:")
         for name, sha in shas.items():
             print(f"  {name}: {sha}")

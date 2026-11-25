@@ -58,7 +58,7 @@ VARIANTS = [
 
     # ================================================================
     # PERMUTATION (TSP) - edge-aware operators (thesis sec:permutation). Each
-    # preserves its named feature's metaphor — DE differential, SHADE
+    # preserves its named feature's metaphor - DE differential, SHADE
     # current-to-pbest, GSA gravity, BFO swim/tumble, krill food/herd,
     # SOS three phases, BBO migration - but rewrites the update in terms
     # of edges, swap sequences, and 2-opt moves.

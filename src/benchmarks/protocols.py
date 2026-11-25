@@ -166,7 +166,7 @@ def run_protocol(variants, dim=10, n_runs=30, max_fes=None, pop_size=50,
     error values across runs (sorted by seed). If `recorder` is provided,
     every run's full result is pushed to it via `recorder.add_run(...)`.
 
-    workers : int — 1 = sequential (default). N>1 = process pool with N
+    workers : int - 1 = sequential (default). N>1 = process pool with N
     workers using the `spawn` start method. Each (variant, function, seed)
     tuple is an independent job; `run_sga` is pure and seed-deterministic,
     so results are identical regardless of `workers`.
@@ -205,7 +205,7 @@ def run_cec2020_realworld_protocol(variants, dim=None, n_runs=30,
     """CEC 2020 real-world (5 mechanical engineering problems). Each problem
     has a fixed dimensionality (3-7); `dim` is passed through but ignored
     by the problem constructors. Constraints are handled via Deb's
-    feasibility rules encoded into the scalar fitness — see
+    feasibility rules encoded into the scalar fitness - see
     `benchmarks/cec2020_realworld.py`.
     """
     return _run_protocol(

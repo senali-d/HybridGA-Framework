@@ -89,7 +89,7 @@ def _parse_euc2d_tsp(path: Path):
 def _euc2d_distance_matrix(coords: np.ndarray) -> np.ndarray:
     """TSPLIB EUC_2D distance: nint(sqrt((x_i-x_j)^2 + (y_i-y_j)^2)).
 
-    Per the TSPLIB-95 spec, ``nint(x) = floor(x + 0.5)`` — round half *up*,
+    Per the TSPLIB-95 spec, ``nint(x) = floor(x + 0.5)`` - round half *up*,
     not Python/NumPy's round-half-to-even. Using the wrong rule shifts a
     handful of edge weights by one unit and makes optimal-tour lengths
     disagree with the published optima, so compute it explicitly.
@@ -154,7 +154,7 @@ def _make_instance(name):
         {"INSTANCE_NAME": name, "__doc__": f"TSPLIB instance {name}."},
     )
     # Re-bind __init__ so positional `ndim` (passed by the shared run
-    # protocol) is accepted and ignored — TSP instances have a fixed dim
+    # protocol) is accepted and ignored - TSP instances have a fixed dim
     # baked into the .tsp file, mirroring the engineering benchmarks.
     def _init(self, ndim=None, tsplib_dir=None):
         super(cls, self).__init__(name=name, tsplib_dir=tsplib_dir)

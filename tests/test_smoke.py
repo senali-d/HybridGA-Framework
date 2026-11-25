@@ -121,7 +121,7 @@ def test_engineering_problems_construct_and_evaluate(name):
     assert np.all(problem.lb < problem.ub)
     assert problem.f_global > 0.0
 
-    # Evaluate the lower-bound corner — far from feasibility for these
+    # Evaluate the lower-bound corner - far from feasibility for these
     # problems; we don't assert feasibility, only that evaluate returns a
     # finite scalar respecting the encoding contract.
     f_lb = problem.evaluate(problem.lb.copy())
@@ -173,7 +173,7 @@ def test_spring_g2_singularity_is_finite():
 
 def test_engineering_feasible_point_below_offset():
     """For each engineering problem, locate a feasible point via rejection
-    sampling and verify its fitness lies strictly below F_OFFSET — the
+    sampling and verify its fitness lies strictly below F_OFFSET - the
     other half of the Deb encoding contract."""
     from benchmarks.cec2020_realworld import ENGINEERING_FUNCS
     rng = np.random.default_rng(0)

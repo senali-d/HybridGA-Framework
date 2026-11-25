@@ -35,7 +35,7 @@ class FeatureConfig:
         mut_prob = 1.0 (per-individual gate) is paired with indpb = 1/dim
         (per-gene rate, set inside `default_mutate`). Expected genes mutated
         per offspring = 1.0. Tune `indpb` to change mutation intensity; do
-        NOT also tune `mut_prob` — two multiplicative knobs invite
+        NOT also tune `mut_prob` - two multiplicative knobs invite
         accidental under-mutation.
     """
     def __init__(
@@ -79,18 +79,18 @@ class FeatureConfig:
 # ===================== DEFAULT (BASELINE) OPERATORS =====================
 
 def default_init(n, dim, lb, ub, ctx):
-    """Uniform random initialization — the SGA baseline."""
+    """Uniform random initialization - the SGA baseline."""
     rng = ctx["rng"]
     return [rng.uniform(lb, ub).tolist() for _ in range(n)]
 
 
 def default_select(population, k, ctx):
-    """Tournament selection of size 3 — DEAP's tools.selTournament."""
+    """Tournament selection of size 3 - DEAP's tools.selTournament."""
     return tools.selTournament(population, k, tournsize=3)
 
 
 def default_crossover(p1, p2, ctx):
-    """Simulated Binary Crossover (SBX) — standard for real-coded GA."""
+    """Simulated Binary Crossover (SBX) - standard for real-coded GA."""
     c1, c2 = tools.cxSimulatedBinaryBounded(
         list(p1), list(p2), eta=20.0,
         low=ctx["lb"].tolist(), up=ctx["ub"].tolist(),
@@ -99,7 +99,7 @@ def default_crossover(p1, p2, ctx):
 
 
 def default_mutate(ind, ctx):
-    """Polynomial bounded mutation — standard real-coded GA mutation."""
+    """Polynomial bounded mutation - standard real-coded GA mutation."""
     mutated, = tools.mutPolynomialBounded(
         list(ind), eta=20.0,
         low=ctx["lb"].tolist(), up=ctx["ub"].tolist(),
@@ -294,17 +294,17 @@ def make_replace(spec):
 # ===================== EVOLUTION LOOP =====================
 
 def clip_to_bounds(vec, lb, ub):
-    """Hard clip — kept for backward compatibility and operator-internal use."""
+    """Hard clip - kept for backward compatibility and operator-internal use."""
     return np.clip(vec, lb, ub).tolist()
 
 
 def apply_bounds(vec, lb, ub, mode="clip", rng=None):
     """Bound handler used by the core loop on init/crossover/mutation outputs.
 
-    "clip"    — np.clip onto [lb, ub] (default; matches historical behavior).
-    "reflect" — fold out-of-bounds back into [lb, ub] (commonly used in
+    "clip"    - np.clip onto [lb, ub] (default; matches historical behavior).
+    "reflect" - fold out-of-bounds back into [lb, ub] (commonly used in
                 CEC-suite literature; reduces boundary-mass bias).
-    "reinit"  — replace out-of-bounds genes with uniform samples in [lb, ub].
+    "reinit"  - replace out-of-bounds genes with uniform samples in [lb, ub].
     """
     arr = np.asarray(vec, dtype=float)
     # Scrub non-finite genes (NaN/±inf) that variant operators (GSA, SHADE,

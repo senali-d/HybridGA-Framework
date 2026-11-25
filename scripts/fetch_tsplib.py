@@ -9,7 +9,7 @@ Source: the official TSPLIB-95 mirror at the University of Heidelberg
 (http://comopt.ifi.uni-heidelberg.de/software/TSPLIB95/). Files are
 public-domain academic test data.
 
-Re-running is safe — instances that already exist are skipped unless
+Re-running is safe - instances that already exist are skipped unless
 `--force` is passed.
 """
 
@@ -54,7 +54,7 @@ def fetch(name: str, out_dir: Path, force: bool = False) -> Path:
             out.write_text(text)
             print(f"  [ok]   {out} ({len(text)} bytes)")
             return out
-        except Exception as e:  # noqa: BLE001 — try next mirror
+        except Exception as e:  # noqa: BLE001 - try next mirror
             print(f"  [warn] mirror failed: {e}")
             last_err = e
     raise RuntimeError(f"all mirrors failed for {name}: {last_err}")
@@ -73,7 +73,7 @@ def main():
     for name in INSTANCES:
         try:
             fetch(name, out_dir, force=args.force)
-        except Exception as e:  # noqa: BLE001 — we want to keep going
+        except Exception as e:  # noqa: BLE001 - we want to keep going
             print(f"  [fail] {name}: {e}")
             failed.append(name)
     if failed:
